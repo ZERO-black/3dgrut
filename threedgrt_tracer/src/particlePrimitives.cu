@@ -77,7 +77,7 @@ __global__ void computeGaussianEnclosingOctaHedronKernel(
         const uint32_t sTriIdx  = octaHedronNumTri * idx;
 
         float33 rot;
-        invRotationMatrix(gRot[idx], rot);
+        quaternionWXYZToMatrixTranspose(gRot[idx], rot);
         const float3 scl   = gScl[idx];
         const float3 trans = gPos[idx];
 
@@ -122,7 +122,7 @@ __global__ void computeGaussianEnclosingTriHexaKernel(
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < gNum) {
         float33 rot;
-        invRotationMatrix(gRot[idx], rot);
+        quaternionWXYZToMatrixTranspose(gRot[idx], rot);
         const float3 scl   = gScl[idx];
         const float3 trans = gPos[idx];
 
@@ -172,7 +172,7 @@ __global__ void computeGaussianEnclosingTriSurfelKernel(
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < gNum) {
         float33 rot;
-        invRotationMatrix(gRot[idx], rot);
+        quaternionWXYZToMatrixTranspose(gRot[idx], rot);
         const float3 scl   = gScl[idx];
         const float3 trans = gPos[idx];
 
@@ -227,7 +227,7 @@ __global__ void computeGaussianEnclosingTriBaryKernel(
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < gNum) {
         float33 rot;
-        invRotationMatrix(make_float4(gRot[idx][0], gRot[idx][1], gRot[idx][2], gRot[idx][3]), rot);
+        quaternionWXYZToMatrixTranspose(make_float4(gRot[idx][0], gRot[idx][1], gRot[idx][2], gRot[idx][3]), rot);
         const float3 scl   = make_float3(gScl[idx][0], gScl[idx][1], gScl[idx][2]);
         const float3 trans = make_float3(gPos[idx][0], gPos[idx][1], gPos[idx][2]);
 
@@ -291,7 +291,7 @@ __global__ void computeGaussianEnclosingTetraHedronKernel(
         const uint32_t sTriIdx  = tetraHedronNumTri * idx;
 
         float33 rot;
-        invRotationMatrix(gRot[idx], rot);
+        quaternionWXYZToMatrixTranspose(gRot[idx], rot);
         const float3 scl   = gScl[idx];
         const float3 trans = gPos[idx];
 
@@ -354,7 +354,7 @@ __global__ void computeGaussianEnclosingDiamondKernel(
         const uint32_t sTriIdx  = diamondNumTri * idx;
 
         float33 rot;
-        invRotationMatrix(gRot[idx], rot);
+        quaternionWXYZToMatrixTranspose(gRot[idx], rot);
         const float3 scl   = gScl[idx];
         const float3 trans = gPos[idx];
 
@@ -461,7 +461,7 @@ __global__ void computeGaussianEnclosingIcosaHedronKernel(
         const uint32_t sTriIdx  = icosaHedronNumTri * idx;
 
         float33 rot;
-        invRotationMatrix(gRot[idx], rot);
+        quaternionWXYZToMatrixTranspose(gRot[idx], rot);
         const float3 scl   = gScl[idx];
         const float3 trans = gPos[idx];
 
@@ -508,7 +508,7 @@ __global__ void computeGaussianEnclosingAABBKernel(
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < gNum) {
         float33 rot;
-        invRotationMatrix(gRot[idx], rot);
+        quaternionWXYZToMatrixTranspose(gRot[idx], rot);
         const float3 scl   = gScl[idx];
         const float3 trans = gPos[idx];
 
@@ -556,7 +556,7 @@ __global__ void computeGaussianEnclosingInstancesKernel(
     if (idx < gNum) {
 
         float33 rot;
-        invRotationMatrix(gRot[idx], rot);
+        quaternionWXYZToMatrixTranspose(gRot[idx], rot);
         const float3 scl   = gScl[idx];
         const float3 trans = gPos[idx];
 
@@ -786,7 +786,7 @@ void copyGaussianEnclosingPrimitives(uint32_t gNum,
     const uint32_t blocks  = div_round_up(static_cast<uint32_t>(gNum), threads);
 
     AT_DISPATCH_FLOATING_TYPES_AND_HALF(
-        gPrimVertTs.type(), "copyGaussianEnclosingPrimitives", ([&] { copyGaussianEnclosingPrimitivesKernel<scalar_t><<<blocks, threads, 0, stream>>>(
+        gPrimVertTs.scalar_type(), "copyGaussianEnclosingPrimitives", ([&] { copyGaussianEnclosingPrimitivesKernel<scalar_t><<<blocks, threads, 0, stream>>>(
                                                                           gNum, gNumVert, gNumTri, gPrimVertTs.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
                                                                           gPrimTriTs.packed_accessor32<int32_t, 2, torch::RestrictPtrTraits>(), gPrimVrt, gPrimTri); }));
 }
@@ -896,7 +896,7 @@ void computeGaussianEnclosingTriBary(uint32_t gNum,
     const uint32_t blocks  = div_round_up(static_cast<uint32_t>(gNum), threads);
 
     AT_DISPATCH_FLOATING_TYPES_AND_HALF(
-        gPos.type(), "computeGaussianEnclosingTriBary", ([&] { computeGaussianEnclosingTriBaryKernel<scalar_t>
+        gPos.scalar_type(), "computeGaussianEnclosingTriBary", ([&] { computeGaussianEnclosingTriBaryKernel<scalar_t>
                                                                    <<<blocks, threads, 0, stream>>>(gNum, gPos.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
                                                                                                     gRot.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
                                                                                                     gScl.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
