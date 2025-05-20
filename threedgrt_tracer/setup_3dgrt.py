@@ -33,6 +33,7 @@ def setup_3dgrt(conf):
     source_files = [
         "src/optixTracer.cpp",
         "src/particlePrimitives.cu",
+        "src/visibilityKernel.cu",
         "bindings.cpp",
     ]
 

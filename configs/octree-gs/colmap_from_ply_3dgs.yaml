@@ -1,0 +1,20 @@
+# @package _global_
+
+# order in which configs override each other (/* - denotes a relative search path)
+defaults:
+  - /base_gs
+  - /dataset: colmap
+  - /initialization: point_cloud
+  - /render: 3dgrt
+  - _self_
+  
+# overwrite of default parameters
+val_frequency: 999999 # never validate
+Octree: False
+n_iterations: 0
+ingp.enabled: False
+gui: False
+path: data/mipnerf360/garden
+out_dir: results/3dgs
+experiment_name: garden-3dgs
+initial_ply: '../dataset/ply-files/3dgs/garden.ply'

@@ -30,6 +30,7 @@ struct PipelineParameters {
     const float* particleRadiance;          ///< spherical harmonics coefficients
     const void* particleExtendedData;       ///< pipeline specific particle data
     int32_t* particleVisibility;       ///< pipeline specific particle data
+    const unsigned char* lodMask;
 
     PackedTensorAccessor32<float, 4> rayRadiance;    ///< output integrated ray radiance
     PackedTensorAccessor32<float, 4> rayDensity;     ///< output integrated ray density
@@ -50,6 +51,7 @@ struct PipelineParameters {
     unsigned int frameNumber;
     int gPrimNumTri;
 
+    uint32_t enableLevels;    ///< 0 = legacy path, 1 = use particleLevels
     static constexpr unsigned int MaxNumHitPerTrace = 16;
 
 #ifdef PARTICLE_PRIMITIVE_TYPE

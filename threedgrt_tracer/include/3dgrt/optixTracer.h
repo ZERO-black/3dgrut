@@ -147,6 +147,7 @@ public:
                   torch::Tensor rayDir,
                   torch::Tensor particleDensity,
                   torch::Tensor particleRadiance,
+                  torch::Tensor particleLevels,
                   uint32_t renderOpts,
                   int sphDegree,
                   float minTransmittance);

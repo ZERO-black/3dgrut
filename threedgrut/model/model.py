@@ -140,6 +140,7 @@ class MixtureOfGaussians(torch.nn.Module):
             torch.empty([0, specular_dim])
         )  # Features of the higher order SH coefficients [n_gaussians, specular_dim]
         self.max_sh_degree = sh_degree
+        self.levels = torch.nn.Parameter(torch.empty([0, 1]), requires_grad=False)
 
         self.conf = conf
         self.scene_extent = scene_extent
@@ -745,6 +746,85 @@ class MixtureOfGaussians(torch.nn.Module):
         self.density = torch.nn.Parameter(torch.tensor(mogt_densities,dtype=self.density.dtype,device=self.device))
         self.scale = torch.nn.Parameter(torch.tensor(mogt_scales,dtype=self.scale.dtype,device=self.device))
         self.rotation = torch.nn.Parameter(torch.tensor(mogt_rotation,dtype=self.rotation.dtype,device=self.device))
+
+        self.n_active_features = self.max_n_features
+
+        if init_model:
+            self.set_optimizable_parameters()
+            self.setup_optimizer()
+            self.validate_fields()
+
+    @torch.no_grad()
+    def init_from_ply_with_octree(self, mogt_path: str, init_model=True):
+        from plyfile import PlyData
+
+        plydata = PlyData.read(mogt_path)
+        v = plydata.elements[0]
+
+        # 1) mean + offset * exp(log_scale)
+        mean_x = np.asarray(v['x'])
+        mean_y = np.asarray(v['y'])
+        mean_z = np.asarray(v['z'])
+        off_x  = np.asarray(v['f_offset_0'])
+        off_y  = np.asarray(v['f_offset_1'])
+        off_z  = np.asarray(v['f_offset_2'])
+        log_sx = np.asarray(v['scale_0'])
+        log_sy = np.asarray(v['scale_1'])
+        log_sz = np.asarray(v['scale_2'])
+
+        mogt_pos = np.stack((
+            mean_x + off_x * np.exp(log_sx),
+            mean_y + off_y * np.exp(log_sy),
+            mean_z + off_z * np.exp(log_sz)
+        ), axis=1)
+
+        # 2) density
+        mogt_densities = np.asarray(v['opacity'])[..., np.newaxis]
+
+        # 3) albedo (unchanged)
+        num_g = mogt_pos.shape[0]
+        mogt_albedo = np.zeros((num_g, 3))
+        mogt_albedo[:,0] = np.asarray(v['f_dc_0'])
+        mogt_albedo[:,1] = np.asarray(v['f_dc_1'])
+        mogt_albedo[:,2] = np.asarray(v['f_dc_2'])
+
+        # 4) specular (unchanged)
+        extra = sorted([p.name for p in v.properties if p.name.startswith("f_rest_")],
+                    key=lambda x: int(x.split('_')[-1]))
+        num_spec = (self.max_n_features+1)**2 - 1
+        mogt_spec = np.zeros((num_g, len(extra)))
+        for i, name in enumerate(extra):
+            mogt_spec[:,i] = np.asarray(v[name])
+        mogt_spec = mogt_spec.reshape((num_g, 3, num_spec)).transpose(0,2,1).reshape((num_g, num_spec*3))
+
+        # 5) actual scale: exp(scale_3~5)
+        sx = np.asarray(v['scale_3'])
+        sy = np.asarray(v['scale_4'])
+        sz = np.asarray(v['scale_5'])
+        mogt_scales = np.stack((sx, sy, sz), axis=1)
+
+        # 6) rotation (unchanged)
+        rot_names = sorted([p.name for p in v.properties if p.name.startswith("rot_")],
+                        key=lambda x: int(x.split('_')[-1]))
+        mogt_rotation = np.zeros((num_g, len(rot_names)))
+        for i, name in enumerate(rot_names):
+            mogt_rotation[:,i] = np.asarray(v[name])
+
+
+        # 7) level
+        mogt_levels = np.asarray(v['level'])[..., np.newaxis]
+
+
+        # --- 파라미터로 로딩 ---
+        t = torch.tensor
+        dev = self.device
+        self.positions        = torch.nn.Parameter(t(mogt_pos,    dtype=self.positions.dtype, device=dev))
+        self.density          = torch.nn.Parameter(t(mogt_densities, dtype=self.density.dtype, device=dev))
+        self.features_albedo  = torch.nn.Parameter(t(mogt_albedo, dtype=self.features_albedo.dtype, device=dev))
+        self.features_specular= torch.nn.Parameter(t(mogt_spec,   dtype=self.features_specular.dtype, device=dev))
+        self.scale            = torch.nn.Parameter(t(mogt_scales, dtype=self.scale.dtype, device=dev))
+        self.rotation         = torch.nn.Parameter(t(mogt_rotation,dtype=self.rotation.dtype, device=dev))
+        self.levels           = torch.nn.Parameter(t(mogt_levels, dtype=self.levels.dtype, device=dev), requires_grad=False)
 
         self.n_active_features = self.max_n_features
 

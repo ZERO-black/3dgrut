@@ -61,6 +61,7 @@ class Tracer:
             mog_scl,
             mog_dns,
             mog_sph,
+            mog_levels,
             render_opts,
             sph_degree,
             min_transmittance,
@@ -73,6 +74,7 @@ class Tracer:
                 ray_dir,
                 particle_density,
                 mog_sph,
+                mog_levels,
                 render_opts,
                 sph_degree,
                 min_transmittance,
@@ -213,7 +215,7 @@ class Tracer:
     
             if self.frame_timer is not None:
                 self.frame_timer.start()
-    
+
             (pred_rgb, pred_opacity, pred_dist, pred_normals, hits_count, mog_visibility) = Tracer._Autograd.apply(
                 self.tracer_wrapper,
                 frame_id,
@@ -225,6 +227,7 @@ class Tracer:
                 gaussians.get_scale().contiguous(),
                 gaussians.get_density().contiguous(),
                 gaussians.get_features().contiguous(),
+                gaussians.levels.contiguous(),
                 Tracer.RenderOpts.DEFAULT,
                 gaussians.n_active_features,
                 self.conf.render.min_transmittance,

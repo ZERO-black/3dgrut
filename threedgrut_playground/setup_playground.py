@@ -78,7 +78,8 @@ def setup_playground(conf):
         "src/meshBuffers.cu",
         "bindings.cpp",
         "../threedgrt_tracer/src/optixTracer.cpp",
-        "../threedgrt_tracer/src/particlePrimitives.cu"
+        "../threedgrt_tracer/src/particlePrimitives.cu",
+        "../threedgrt_tracer/src/visibilityKernel.cu"
     ]
 
     # Compile slang kernels
