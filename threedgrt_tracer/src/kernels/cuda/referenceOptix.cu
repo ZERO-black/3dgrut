@@ -221,10 +221,12 @@ extern "C" __global__ void __intersection__is() {
 
 extern "C" __global__ void __anyhit__ah() {
     RayHit hit = RayHit{optixPrimitiveIndex(), optixGetRayTmax()};
-    if (params.enableLoD && params.lodMask[hit.particleId] == 0) {
+#ifdef ENABLE_LOD
+    if (params.lodMask[hit.particleId] == 0) {
         optixIgnoreIntersection();
         return;
     }
+#endif
 
     if (hit.distance < __uint_as_float(optixGetPayload_31())) {
         compareAndSwapHitPayloadValue(hit, 0, 1);

@@ -198,7 +198,8 @@ std::vector<std::string> OptixTracer::generateDefines(
     bool particleKernelDensityClamping,
     int particleRadianceSphDegree,
     bool enableNormals,
-    bool enableHitCounts) {
+    bool enableHitCounts,
+    bool enableLod) {
     std::vector<std::string> defines;
     if (_state) {
         defines.emplace_back("-DPARTICLE_KERNEL_DEGREE=" + std::to_string(static_cast<int32_t>(particleKernelDegree)));
@@ -207,6 +208,9 @@ std::vector<std::string> OptixTracer::generateDefines(
         }
         if (enableHitCounts) {
             defines.emplace_back("-DENABLE_HIT_COUNTS");
+        }
+        if (enableLod) {
+            defines.emplace_back("-DENABLE_LOD");
         }
         defines.emplace_back("-DSPH_MAX_NUM_COEFFS=" + std::to_string((_state->particleRadianceSphDegree + 1) * (_state->particleRadianceSphDegree + 1)));
         defines.emplace_back("-DPARTICLE_PRIMITIVE_TYPE=" + std::to_string(_state->gPrimType));
@@ -265,7 +269,7 @@ OptixTracer::OptixTracer(
     _state->lodStdDist                    = 0;
 
     std::vector<std::string> defines = generateDefines(particleKernelDegree, particleKernelDensityClamping,
-                                                       particleRadianceSphDegree, enableNormals, enableHitCounts);
+                                                       particleRadianceSphDegree, enableNormals, enableHitCounts, enableLoD);
 
     const uint32_t sharedFlags =
         (_state->gPrimType == MOGTracingSphere ? PipelineFlag_SpherePrim : ((_state->gPrimType == MOGTracingCustom) || (_state->gPrimType == MOGTracingInstances) ? PipelineFlag_HasIS : 0));
@@ -912,7 +916,6 @@ OptixTracer::trace(uint32_t frameNumber,
     paramsHost.hitMinGaussianResponse = _state->particleKernelMinResponse;
     paramsHost.alphaMinThreshold      = 1.0f / 255.0f;
     paramsHost.sphDegree              = sphDegree;
-    paramsHost.enableLoD              = _state->enableLoD ? 1u : 0u;
 
     std::memcpy(&paramsHost.rayToWorld[0].x, rayToWorld.cpu().data_ptr<float>(), 3 * sizeof(float4));
     paramsHost.rayOrigin    = packed_accessor32<float, 4>(rayOri);

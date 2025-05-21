@@ -107,7 +107,8 @@ protected:
         bool particleKernelDensityClamping,
         int particleRadianceSphDegree,
         bool enableNormals,
-        bool enableHitCounts
+        bool enableHitCounts,
+        bool enableLod = false
     );
     void createPipeline(const OptixDeviceContext context,
                         const std::string& path,
