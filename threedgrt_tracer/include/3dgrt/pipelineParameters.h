@@ -51,7 +51,7 @@ struct PipelineParameters {
     unsigned int frameNumber;
     int gPrimNumTri;
 
-    uint32_t enableLevels;    ///< 0 = legacy path, 1 = use particleLevels
+    uint32_t enableLoD; ///< 0 = legacy path, 1 = use particleLevels
     static constexpr unsigned int MaxNumHitPerTrace = 16;
 
 #ifdef PARTICLE_PRIMITIVE_TYPE

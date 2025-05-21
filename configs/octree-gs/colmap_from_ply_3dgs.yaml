@@ -10,7 +10,7 @@ defaults:
   
 # overwrite of default parameters
 val_frequency: 999999 # never validate
-Octree: False
+lod: False
 n_iterations: 0
 ingp.enabled: False
 gui: False

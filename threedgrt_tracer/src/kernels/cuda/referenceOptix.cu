@@ -221,7 +221,7 @@ extern "C" __global__ void __intersection__is() {
 
 extern "C" __global__ void __anyhit__ah() {
     RayHit hit = RayHit{optixPrimitiveIndex(), optixGetRayTmax()};
-    if (params.enableLevels && params.lodMask[hit.particleId] == 0) {
+    if (params.enableLoD && params.lodMask[hit.particleId] == 0) {
         optixIgnoreIntersection();
         return;
     }

@@ -226,7 +226,7 @@ class Trainer3DGRUT:
                 else f"{conf.out_dir}/{conf.experiment_name}/export_last.ply"
             )
             logger.info(f"Loading a ply model from {ply_path}!")
-            if (conf.get('Octree', False)):
+            if (conf.get('lod', False)):
                 model.init_from_ply_with_octree(ply_path)
             else:
                 model.init_from_ply(ply_path)

@@ -141,7 +141,10 @@ class MixtureOfGaussians(torch.nn.Module):
         )  # Features of the higher order SH coefficients [n_gaussians, specular_dim]
         self.max_sh_degree = sh_degree
         self.levels = torch.nn.Parameter(torch.empty([0, 1]), requires_grad=False)
+        self.extra_levels = torch.nn.Parameter(torch.empty([0, 1]), requires_grad=False)
+        self.std_dist = 0
 
+        conf.setdefault('lod', False)
         self.conf = conf
         self.scene_extent = scene_extent
         self.positions_gradient_norm = None
@@ -761,7 +764,14 @@ class MixtureOfGaussians(torch.nn.Module):
         plydata = PlyData.read(mogt_path)
         v = plydata.elements[0]
 
-        # 1) mean + offset * exp(log_scale)
+        for line in plydata.obj_info:
+            key, value = line.split()
+            if (key == "standard_dist"):
+                self.std_dist = float(value)
+                break
+        self.renderer.tracer_wrapper.update_lod_std_dist(self.std_dist)
+
+        # 1. mean + offset * exp(log_scale)
         mean_x = np.asarray(v['x'])
         mean_y = np.asarray(v['y'])
         mean_z = np.asarray(v['z'])
@@ -778,17 +788,17 @@ class MixtureOfGaussians(torch.nn.Module):
             mean_z + off_z * np.exp(log_sz)
         ), axis=1)
 
-        # 2) density
+        # 2. density
         mogt_densities = np.asarray(v['opacity'])[..., np.newaxis]
 
-        # 3) albedo (unchanged)
+        # 3. albedo
         num_g = mogt_pos.shape[0]
         mogt_albedo = np.zeros((num_g, 3))
         mogt_albedo[:,0] = np.asarray(v['f_dc_0'])
         mogt_albedo[:,1] = np.asarray(v['f_dc_1'])
         mogt_albedo[:,2] = np.asarray(v['f_dc_2'])
 
-        # 4) specular (unchanged)
+        # 4. specular
         extra = sorted([p.name for p in v.properties if p.name.startswith("f_rest_")],
                     key=lambda x: int(x.split('_')[-1]))
         num_spec = (self.max_n_features+1)**2 - 1
@@ -797,13 +807,13 @@ class MixtureOfGaussians(torch.nn.Module):
             mogt_spec[:,i] = np.asarray(v[name])
         mogt_spec = mogt_spec.reshape((num_g, 3, num_spec)).transpose(0,2,1).reshape((num_g, num_spec*3))
 
-        # 5) actual scale: exp(scale_3~5)
+        # 5. actual scale: exp(scale_3~5)
         sx = np.asarray(v['scale_3'])
         sy = np.asarray(v['scale_4'])
         sz = np.asarray(v['scale_5'])
         mogt_scales = np.stack((sx, sy, sz), axis=1)
 
-        # 6) rotation (unchanged)
+        # 6. rotation
         rot_names = sorted([p.name for p in v.properties if p.name.startswith("rot_")],
                         key=lambda x: int(x.split('_')[-1]))
         mogt_rotation = np.zeros((num_g, len(rot_names)))
@@ -811,11 +821,10 @@ class MixtureOfGaussians(torch.nn.Module):
             mogt_rotation[:,i] = np.asarray(v[name])
 
 
-        # 7) level
+        # 7. level
         mogt_levels = np.asarray(v['level'])[..., np.newaxis]
+        mogt_extra_levels = np.asarray(v['extra_level'])[..., np.newaxis]
 
-
-        # --- 파라미터로 로딩 ---
         t = torch.tensor
         dev = self.device
         self.positions        = torch.nn.Parameter(t(mogt_pos,    dtype=self.positions.dtype, device=dev))
@@ -825,6 +834,7 @@ class MixtureOfGaussians(torch.nn.Module):
         self.scale            = torch.nn.Parameter(t(mogt_scales, dtype=self.scale.dtype, device=dev))
         self.rotation         = torch.nn.Parameter(t(mogt_rotation,dtype=self.rotation.dtype, device=dev))
         self.levels           = torch.nn.Parameter(t(mogt_levels, dtype=self.levels.dtype, device=dev), requires_grad=False)
+        self.extra_levels     = torch.nn.Parameter(t(mogt_extra_levels, dtype=self.extra_levels.dtype, device=dev), requires_grad=False)
 
         self.n_active_features = self.max_n_features
 

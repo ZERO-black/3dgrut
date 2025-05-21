@@ -74,6 +74,9 @@ protected:
         float particleKernelMinResponse;
         bool particleKernelDensityClamping;
         int particleRadianceSphDegree;
+        // LoD
+        bool enableLoD;
+        float lodStdDist;
 
         uint32_t gNum;         ///< current number of gaussians
         uint32_t gPrimType;    ///< type of the prim [0 : octahedron 1 : tetrahedron]
@@ -136,7 +139,8 @@ public:
         bool particleKernelDensityClamping,
         int particleRadianceSphDegree,
         bool enableNormals,
-        bool enableHitCounts);
+        bool enableHitCounts,
+        bool enableLoD = false);
 
     virtual ~OptixTracer();
 
@@ -148,6 +152,7 @@ public:
                   torch::Tensor particleDensity,
                   torch::Tensor particleRadiance,
                   torch::Tensor particleLevels,
+                  torch::Tensor particleExtraLevels,
                   uint32_t renderOpts,
                   int sphDegree,
                   float minTransmittance);
@@ -177,4 +182,6 @@ public:
                           torch::Tensor mogDns,
                           unsigned int rebuild,
                           bool allow_update);
+
+    void updateLodStdDist(float dist);
 };

@@ -62,6 +62,7 @@ class Tracer:
             mog_dns,
             mog_sph,
             mog_levels,
+            mog_extra_levels,
             render_opts,
             sph_degree,
             min_transmittance,
@@ -75,6 +76,7 @@ class Tracer:
                 particle_density,
                 mog_sph,
                 mog_levels,
+                mog_extra_levels,
                 render_opts,
                 sph_degree,
                 min_transmittance,
@@ -184,6 +186,7 @@ class Tracer:
             self.conf.render.particle_radiance_sph_degree,
             self.conf.render.enable_normals,
             self.conf.render.enable_hitcounts,
+            self.conf.lod
         )
 
         self.frame_timer = CudaTimer() if self.conf.render.enable_kernel_timings else None
@@ -228,6 +231,7 @@ class Tracer:
                 gaussians.get_density().contiguous(),
                 gaussians.get_features().contiguous(),
                 gaussians.levels.contiguous(),
+                gaussians.extra_levels.contiguous(),
                 Tracer.RenderOpts.DEFAULT,
                 gaussians.n_active_features,
                 self.conf.render.min_transmittance,

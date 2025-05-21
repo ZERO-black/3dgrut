@@ -6,10 +6,13 @@
 #include <device_launch_parameters.h>
 #include <math_constants.h>
 
+#include <3dgrt/particleDensity.h>
+
+constexpr size_t stride = sizeof(ParticleDensity) / sizeof(float);
 __global__ void computeVisibilityKernel(
-    const float* lods,
-    const float* extra_levels,
-    const float3* gPos,
+    const float* levels,
+    const float* extraLevels,
+    const ParticleDensity* particles,
     unsigned char* mask,
     int count,
     float3 eye,
@@ -18,10 +21,10 @@ __global__ void computeVisibilityKernel(
     if (idx >= count)
         return;
 
-    float3 anchor    = gPos[idx];
-    float dist       = length(anchor - eye);
-    float pred_level = log2f(std_dist / dist); //+ extra_levels[idx];
-    mask[idx]        = (lods[idx] <= pred_level) ? 1 : 0;
+    float3 anchor   = particles[idx].position;
+    float dist      = length(anchor - eye);
+    float predLevel = log2f(std_dist / dist) + extraLevels[idx];
+    mask[idx]       = (levels[idx] <= predLevel) ? 1 : 0;
 }
 
 inline uint32_t div_round_up(uint32_t x, uint32_t y) {
@@ -29,9 +32,9 @@ inline uint32_t div_round_up(uint32_t x, uint32_t y) {
 }
 
 void launchVisibilityKernel(
-    const float* lods,
-    const float* extra_levels,
-    const float3* gPos,
+    const float* levels,
+    const float* extraLevels,
+    const ParticleDensity* particles,
     unsigned char* mask,
     int count,
     float3 eye,
@@ -45,9 +48,9 @@ void launchVisibilityKernel(
 
     // 3. Launch the visibility kernel
     computeVisibilityKernel<<<blocks, threads, 0, stream>>>(
-        lods,
-        extra_levels,
-        gPos,
+        levels,
+        extraLevels,
+        particles,
         mask,
         count,
         eye,

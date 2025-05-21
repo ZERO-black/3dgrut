@@ -27,6 +27,7 @@
 #include <3dgrt/visibilityKernel.h>
 #include <3dgrt/pipelineParameters.h>
 #include <3dgrt/tensorBuffering.h>
+#include <3dgrt/particleDensity.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAUtils.h>
 #include <algorithm>
@@ -225,7 +226,8 @@ OptixTracer::OptixTracer(
     bool particleKernelDensityClamping,
     int particleRadianceSphDegree,
     bool enableNormals,
-    bool enableHitCounts) {
+    bool enableHitCounts,
+    bool enableLoD) {
 
     _state = new State();
     memset(_state, 0, sizeof(State));
@@ -259,6 +261,8 @@ OptixTracer::OptixTracer(
     _state->gPrimNumTri                   = 0;
     _state->gPrimNumVert                  = 0;
     _state->gPrimNumTri                   = 0;
+    _state->enableLoD                     = enableLoD;
+    _state->lodStdDist                    = 0;
 
     std::vector<std::string> defines = generateDefines(particleKernelDegree, particleKernelDensityClamping,
                                                        particleRadianceSphDegree, enableNormals, enableHitCounts);
@@ -853,6 +857,7 @@ OptixTracer::trace(uint32_t frameNumber,
                    torch::Tensor particleDensity,
                    torch::Tensor particleRadiance,
                    torch::Tensor particleLevels,
+                   torch::Tensor particleExtraLevels,
                    uint32_t renderOpts,
                    int sphDegree,
                    float minTransmittance) {
@@ -865,33 +870,36 @@ OptixTracer::trace(uint32_t frameNumber,
     torch::Tensor rayHitsCount       = torch::zeros({rayOri.size(0), rayOri.size(1), rayOri.size(2), 1}, opts);
     torch::Tensor particleVisibility = torch::zeros({particleDensity.size(0), 1}, opts);
 
-    // 2. create Visibility mask
-    torch::Tensor lodMask = torch::empty({particleDensity.size(0)}, torch::dtype(torch::kUInt8).device(torch::kCUDA));
-
-    float host_eye[3];
-    CUDA_CHECK(cudaMemcpy(
-        host_eye,
-        rayOri.data_ptr<float>(), // origin x,y,z
-        3 * sizeof(float),
-        cudaMemcpyDeviceToHost));
-
-    float3 cam_center = make_float3(
-        host_eye[0], host_eye[1], host_eye[2]);
-
-    // 4. execute Visibility kernel
-    launchVisibilityKernel(
-        /* lods          */ particleLevels.data_ptr<float>(),
-        /* extra_levels  */ nullptr,
-        /* gPos          */ reinterpret_cast<const float3*>(particleDensity.data_ptr<float>()),
-        /* mask          */ reinterpret_cast<unsigned char*>(lodMask.data_ptr<uint8_t>()),
-        /* count         */ static_cast<int>(particleDensity.size(0)),
-        /* eye           */ cam_center,
-        /* standard_dist */ 50.683151f);
-
-    // 5. 1byte mask -> int32
-    torch::Tensor lodMask32 = lodMask.to(torch::kInt32);
-
     PipelineParameters paramsHost;
+    // LoD
+    if (_state->enableLoD) {
+        torch::Tensor lodMask = torch::empty({particleDensity.size(0)}, torch::dtype(torch::kUInt8).device(torch::kCUDA));
+
+        float host_eye[3];
+        CUDA_CHECK(cudaMemcpy(
+            host_eye,
+            rayOri.data_ptr<float>(), // origin x,y,z
+            3 * sizeof(float),
+            cudaMemcpyDeviceToHost));
+
+        float3 cam_center = make_float3(
+            host_eye[0], host_eye[1], host_eye[2]);
+
+        // 4. execute Visibility kernel
+        launchVisibilityKernel(
+            /* lods          */ particleLevels.data_ptr<float>(),
+            /* extra_levels  */ particleExtraLevels.data_ptr<float>(),
+            /* gPos          */ getPtr<const ParticleDensity>(particleDensity),
+            /* mask          */ reinterpret_cast<unsigned char*>(lodMask.data_ptr<uint8_t>()),
+            /* count         */ static_cast<int>(particleDensity.size(0)),
+            /* eye           */ cam_center,
+            /* standard_dist */ _state->lodStdDist);
+
+        paramsHost.lodMask = reinterpret_cast<const unsigned char*>(lodMask.data_ptr<uint8_t>());
+    } else {
+        paramsHost.lodMask = nullptr;
+    }
+
     paramsHost.handle = _state->gasHandle;
     paramsHost.aabb   = _state->gasAABB;
 
@@ -904,7 +912,7 @@ OptixTracer::trace(uint32_t frameNumber,
     paramsHost.hitMinGaussianResponse = _state->particleKernelMinResponse;
     paramsHost.alphaMinThreshold      = 1.0f / 255.0f;
     paramsHost.sphDegree              = sphDegree;
-    paramsHost.enableLevels           = 1u;
+    paramsHost.enableLoD              = _state->enableLoD ? 1u : 0u;
 
     std::memcpy(&paramsHost.rayToWorld[0].x, rayToWorld.cpu().data_ptr<float>(), 3 * sizeof(float4));
     paramsHost.rayOrigin    = packed_accessor32<float, 4>(rayOri);
@@ -912,7 +920,6 @@ OptixTracer::trace(uint32_t frameNumber,
 
     paramsHost.particleDensity      = getPtr<const ParticleDensity>(particleDensity);
     paramsHost.particleRadiance     = getPtr<const float>(particleRadiance);
-    paramsHost.lodMask              = reinterpret_cast<const unsigned char*>(lodMask.data_ptr<uint8_t>());
     paramsHost.particleExtendedData = reinterpret_cast<const void*>(_state->gPipelineParticleData);
     paramsHost.particleVisibility   = getPtr<int32_t>(particleVisibility);
 
@@ -1006,4 +1013,8 @@ OptixTracer::traceBwd(uint32_t frameNumber,
                             rayRad.size(2), rayRad.size(1), rayRad.size(0)));
 
     return std::tuple<torch::Tensor, torch::Tensor>(particleDensityGrad, particleRadianceGrad);
+}
+
+void OptixTracer::updateLodStdDist(float dist) {
+    _state->lodStdDist = dist;
 }

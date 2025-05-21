@@ -1,11 +1,12 @@
 #pragma once
 
 #include <optix.h>
+#include <3dgrt/particleDensity.h>
 
 void launchVisibilityKernel(
-    const float* lods,
-    const float* extra_levels,
-    const float3* gPos,
+    const float* levels,
+    const float* extraLevels,
+    const ParticleDensity* particles,
     unsigned char* mask,
     int count,
     float3 eye,
