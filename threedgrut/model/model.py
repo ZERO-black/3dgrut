@@ -37,6 +37,8 @@ from threedgrut.utils.misc import (
 )
 from threedgrut.utils.render import RGB2SH
 from threedgrut.optimizers import SelectiveAdam
+from omegaconf import OmegaConf
+
 
 class MixtureOfGaussians(torch.nn.Module):
     """ """
@@ -144,7 +146,9 @@ class MixtureOfGaussians(torch.nn.Module):
         self.extra_levels = torch.nn.Parameter(torch.empty([0, 1]), requires_grad=False)
         self.std_dist = 0
 
-        conf.setdefault('lod', False)
+        OmegaConf.set_struct(conf, False)
+        conf['lod'] = conf.get('lod', False)
+        OmegaConf.set_struct(conf, True)
         self.conf = conf
         self.scene_extent = scene_extent
         self.positions_gradient_norm = None

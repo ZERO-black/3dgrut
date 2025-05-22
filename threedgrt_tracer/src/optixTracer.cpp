@@ -37,6 +37,9 @@
 #include <optix.h>
 #include <optix_function_table_definition.h>
 
+#include <chrono>
+#include <iostream>
+
 //------------------------------------------------------------------------------
 //
 //------------------------------------------------------------------------------
@@ -877,8 +880,10 @@ OptixTracer::trace(uint32_t frameNumber,
     PipelineParameters paramsHost;
     // LoD
     if (_state->enableLoD) {
-        torch::Tensor lodMask = torch::empty({particleDensity.size(0)}, torch::dtype(torch::kUInt8).device(torch::kCUDA));
-
+        std::chrono::high_resolution_clock::time_point frame_start = std::chrono::high_resolution_clock::now();
+        torch::Tensor lodMask                                      = torch::empty({particleDensity.size(0)}, torch::dtype(torch::kUInt8).device(torch::kCUDA));
+        static double total_time                                   = 0.0;
+        static int frame_count                                     = 0;
         float host_eye[3];
         CUDA_CHECK(cudaMemcpy(
             host_eye,
@@ -900,6 +905,15 @@ OptixTracer::trace(uint32_t frameNumber,
             /* standard_dist */ _state->lodStdDist);
 
         paramsHost.lodMask = reinterpret_cast<const unsigned char*>(lodMask.data_ptr<uint8_t>());
+
+        auto frame_end     = std::chrono::high_resolution_clock::now();
+        double duration_ms = std::chrono::duration<double, std::milli>(frame_end - frame_start).count();
+        total_time += duration_ms;
+        frame_count++;
+
+        double avg_time = total_time / frame_count;
+        std::cout << "[Frame " << frame_count << "] LOD mask generation time: "
+                  << duration_ms << " ms, average: " << avg_time << " ms\n";
     } else {
         paramsHost.lodMask = nullptr;
     }
