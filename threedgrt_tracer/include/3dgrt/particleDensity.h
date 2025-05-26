@@ -14,11 +14,12 @@
 // limitations under the License.
 
 #pragma once
-struct ParticleDensity
-{
+struct ParticleDensity {
     float3 position;
     float density;
     float4 quaternion;
     float3 scale;
-    float padding;
+    float level;
+    float extraLevel;
+    float3 padding;
 };

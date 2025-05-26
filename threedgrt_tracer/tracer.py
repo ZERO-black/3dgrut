@@ -67,7 +67,7 @@ class Tracer:
             sph_degree,
             min_transmittance,
         ):
-            particle_density = torch.concat([mog_pos, mog_dns, mog_rot, mog_scl, torch.zeros_like(mog_dns)], dim=1)
+            particle_density = torch.concat([mog_pos, mog_dns, mog_rot, mog_scl, mog_levels, mog_extra_levels, torch.zeros_like(mog_dns), torch.zeros_like(mog_dns), torch.zeros_like(mog_dns)], dim=1)
             ray_radiance, ray_density, ray_hit_distance, ray_normals, hits_count, mog_visibility = tracer_wrapper.trace(
                 frame_id,
                 ray_to_world,
@@ -75,8 +75,6 @@ class Tracer:
                 ray_dir,
                 particle_density,
                 mog_sph,
-                mog_levels,
-                mog_extra_levels,
                 render_opts,
                 sph_degree,
                 min_transmittance,

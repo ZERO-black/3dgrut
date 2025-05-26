@@ -863,8 +863,6 @@ OptixTracer::trace(uint32_t frameNumber,
                    torch::Tensor rayDir,
                    torch::Tensor particleDensity,
                    torch::Tensor particleRadiance,
-                   torch::Tensor particleLevels,
-                   torch::Tensor particleExtraLevels,
                    uint32_t renderOpts,
                    int sphDegree,
                    float minTransmittance) {
@@ -878,46 +876,8 @@ OptixTracer::trace(uint32_t frameNumber,
     torch::Tensor particleVisibility = torch::zeros({particleDensity.size(0), 1}, opts);
 
     PipelineParameters paramsHost;
-    // LoD
-    if (_state->enableLoD) {
-        std::chrono::high_resolution_clock::time_point frame_start = std::chrono::high_resolution_clock::now();
-        torch::Tensor lodMask                                      = torch::empty({particleDensity.size(0)}, torch::dtype(torch::kUInt8).device(torch::kCUDA));
-        static double total_time                                   = 0.0;
-        static int frame_count                                     = 0;
-        float host_eye[3];
-        CUDA_CHECK(cudaMemcpy(
-            host_eye,
-            rayOri.data_ptr<float>(), // origin x,y,z
-            3 * sizeof(float),
-            cudaMemcpyDeviceToHost));
 
-        float3 cam_center = make_float3(
-            host_eye[0], host_eye[1], host_eye[2]);
-
-        // 4. execute Visibility kernel
-        launchVisibilityKernel(
-            /* lods          */ particleLevels.data_ptr<float>(),
-            /* extra_levels  */ particleExtraLevels.data_ptr<float>(),
-            /* gPos          */ getPtr<const ParticleDensity>(particleDensity),
-            /* mask          */ reinterpret_cast<unsigned char*>(lodMask.data_ptr<uint8_t>()),
-            /* count         */ static_cast<int>(particleDensity.size(0)),
-            /* eye           */ cam_center,
-            /* standard_dist */ _state->lodStdDist);
-
-        paramsHost.lodMask = reinterpret_cast<const unsigned char*>(lodMask.data_ptr<uint8_t>());
-
-        auto frame_end     = std::chrono::high_resolution_clock::now();
-        double duration_ms = std::chrono::duration<double, std::milli>(frame_end - frame_start).count();
-        total_time += duration_ms;
-        frame_count++;
-
-        double avg_time = total_time / frame_count;
-        std::cout << "[Frame " << frame_count << "] LOD mask generation time: "
-                  << duration_ms << " ms, average: " << avg_time << " ms\n";
-    } else {
-        paramsHost.lodMask = nullptr;
-    }
-
+    paramsHost.lodStdDist = _state->lodStdDist;
     paramsHost.handle = _state->gasHandle;
     paramsHost.aabb   = _state->gasAABB;
 

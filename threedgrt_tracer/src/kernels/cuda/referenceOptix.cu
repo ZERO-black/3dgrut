@@ -154,8 +154,8 @@ extern "C" __global__ void __raygen__rg() {
                     nullptr
 #endif
                 );
-                
-                // NOTE(qi): Race condition here, but as we are writing the same value, it seems it is safe.            
+
+                // NOTE(qi): Race condition here, but as we are writing the same value, it seems it is safe.
                 if (acceptedHit) {
                     params.particleVisibility[rayHit.particleId] = 1;
                 }
@@ -222,7 +222,10 @@ extern "C" __global__ void __intersection__is() {
 extern "C" __global__ void __anyhit__ah() {
     RayHit hit = RayHit{optixPrimitiveIndex(), optixGetRayTmax()};
 #ifdef ENABLE_LOD
-    if (params.lodMask[hit.particleId] == 0) {
+    float3 anchor   = params.particleDensity[hit.particleId].position;
+    float dist      = length(optixGetWorldRayOrigin() - anchor);
+    float predLevel = log2f(params.lodStdDist / dist) + params.particleDensity[hit.particleId].extraLevel;
+    if (params.particleDensity[hit.particleId].level > predLevel) {
         optixIgnoreIntersection();
         return;
     }
