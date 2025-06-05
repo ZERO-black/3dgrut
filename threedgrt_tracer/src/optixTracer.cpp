@@ -24,10 +24,8 @@
 #include <3dgrt/cuoptixMacros.h>
 #include <3dgrt/optixTracer.h>
 #include <3dgrt/particlePrimitives.h>
-#include <3dgrt/visibilityKernel.h>
 #include <3dgrt/pipelineParameters.h>
 #include <3dgrt/tensorBuffering.h>
-#include <3dgrt/particleDensity.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAUtils.h>
 #include <algorithm>
@@ -36,9 +34,6 @@
 #include <nvrtc.h>
 #include <optix.h>
 #include <optix_function_table_definition.h>
-
-#include <chrono>
-#include <iostream>
 
 //------------------------------------------------------------------------------
 //
@@ -201,8 +196,7 @@ std::vector<std::string> OptixTracer::generateDefines(
     bool particleKernelDensityClamping,
     int particleRadianceSphDegree,
     bool enableNormals,
-    bool enableHitCounts,
-    bool enableLod) {
+    bool enableHitCounts) {
     std::vector<std::string> defines;
     if (_state) {
         defines.emplace_back("-DPARTICLE_KERNEL_DEGREE=" + std::to_string(static_cast<int32_t>(particleKernelDegree)));
@@ -211,9 +205,6 @@ std::vector<std::string> OptixTracer::generateDefines(
         }
         if (enableHitCounts) {
             defines.emplace_back("-DENABLE_HIT_COUNTS");
-        }
-        if (enableLod) {
-            defines.emplace_back("-DENABLE_LOD");
         }
         defines.emplace_back("-DSPH_MAX_NUM_COEFFS=" + std::to_string((_state->particleRadianceSphDegree + 1) * (_state->particleRadianceSphDegree + 1)));
         defines.emplace_back("-DPARTICLE_PRIMITIVE_TYPE=" + std::to_string(_state->gPrimType));
@@ -233,8 +224,7 @@ OptixTracer::OptixTracer(
     bool particleKernelDensityClamping,
     int particleRadianceSphDegree,
     bool enableNormals,
-    bool enableHitCounts,
-    bool enableLoD) {
+    bool enableHitCounts) {
 
     _state = new State();
     memset(_state, 0, sizeof(State));
@@ -268,11 +258,9 @@ OptixTracer::OptixTracer(
     _state->gPrimNumTri                   = 0;
     _state->gPrimNumVert                  = 0;
     _state->gPrimNumTri                   = 0;
-    _state->enableLoD                     = enableLoD;
-    _state->lodStdDist                    = 0;
 
     std::vector<std::string> defines = generateDefines(particleKernelDegree, particleKernelDensityClamping,
-                                                       particleRadianceSphDegree, enableNormals, enableHitCounts, enableLoD);
+                                                       particleRadianceSphDegree, enableNormals, enableHitCounts);
 
     const uint32_t sharedFlags =
         (_state->gPrimType == MOGTracingSphere ? PipelineFlag_SpherePrim : ((_state->gPrimType == MOGTracingCustom) || (_state->gPrimType == MOGTracingInstances) ? PipelineFlag_HasIS : 0));
@@ -863,8 +851,6 @@ OptixTracer::trace(uint32_t frameNumber,
                    torch::Tensor rayDir,
                    torch::Tensor particleDensity,
                    torch::Tensor particleRadiance,
-                   torch::Tensor particleLevels,
-                   torch::Tensor particleExtraLevels,
                    uint32_t renderOpts,
                    int sphDegree,
                    float minTransmittance) {
@@ -878,46 +864,6 @@ OptixTracer::trace(uint32_t frameNumber,
     torch::Tensor particleVisibility = torch::zeros({particleDensity.size(0), 1}, opts);
 
     PipelineParameters paramsHost;
-    // LoD
-    if (_state->enableLoD) {
-        std::chrono::high_resolution_clock::time_point frame_start = std::chrono::high_resolution_clock::now();
-        torch::Tensor lodMask                                      = torch::empty({particleDensity.size(0)}, torch::dtype(torch::kUInt8).device(torch::kCUDA));
-        static double total_time                                   = 0.0;
-        static int frame_count                                     = 0;
-        float host_eye[3];
-        CUDA_CHECK(cudaMemcpy(
-            host_eye,
-            rayOri.data_ptr<float>(), // origin x,y,z
-            3 * sizeof(float),
-            cudaMemcpyDeviceToHost));
-
-        float3 cam_center = make_float3(
-            host_eye[0], host_eye[1], host_eye[2]);
-
-        // 4. execute Visibility kernel
-        launchVisibilityKernel(
-            /* lods          */ particleLevels.data_ptr<float>(),
-            /* extra_levels  */ particleExtraLevels.data_ptr<float>(),
-            /* gPos          */ getPtr<const ParticleDensity>(particleDensity),
-            /* mask          */ reinterpret_cast<unsigned char*>(lodMask.data_ptr<uint8_t>()),
-            /* count         */ static_cast<int>(particleDensity.size(0)),
-            /* eye           */ cam_center,
-            /* standard_dist */ _state->lodStdDist);
-
-        paramsHost.lodMask = reinterpret_cast<const unsigned char*>(lodMask.data_ptr<uint8_t>());
-
-        auto frame_end     = std::chrono::high_resolution_clock::now();
-        double duration_ms = std::chrono::duration<double, std::milli>(frame_end - frame_start).count();
-        total_time += duration_ms;
-        frame_count++;
-
-        double avg_time = total_time / frame_count;
-        std::cout << "[Frame " << frame_count << "] LOD mask generation time: "
-                  << duration_ms << " ms, average: " << avg_time << " ms\n";
-    } else {
-        paramsHost.lodMask = nullptr;
-    }
-
     paramsHost.handle = _state->gasHandle;
     paramsHost.aabb   = _state->gasAABB;
 
@@ -1030,8 +976,4 @@ OptixTracer::traceBwd(uint32_t frameNumber,
                             rayRad.size(2), rayRad.size(1), rayRad.size(0)));
 
     return std::tuple<torch::Tensor, torch::Tensor>(particleDensityGrad, particleRadianceGrad);
-}
-
-void OptixTracer::updateLodStdDist(float dist) {
-    _state->lodStdDist = dist;
 }

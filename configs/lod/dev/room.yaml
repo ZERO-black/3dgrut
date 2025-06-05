@@ -4,22 +4,22 @@
 defaults:
   - /base_gs
   - /dataset: colmap
-  - /initialization: point_cloud
+  - /initialization: colmap
   - /render: 3dgrt
   - _self_
   
 # overwrite of default parameters
 val_frequency: 999999 # never validate
-lod: False
-n_iterations: 0
+lod: True
+n_iterations: 30000
 
 export_ingp:
   enabled: false
 
-gui: False
-path: data/mipnerf360/garden
-out_dir: results/lod/benchmark/0521/ckpt
-experiment_name: 3dgs-3dgrt
-initial_ply: '../dataset/ply-files/3dgs/garden.ply'
+with_gui: False
+path: data/mipnerf360/room
+out_dir: results/lod/dev/0603/ckpt
+experiment_name: initialization-0603
+
 dataset:
   downsample_factor: 4

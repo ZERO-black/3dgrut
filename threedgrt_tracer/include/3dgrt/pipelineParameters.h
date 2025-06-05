@@ -97,4 +97,5 @@ struct PipelineBackwardParameters : PipelineParameters {
 
     ParticleDensity* particleDensityGrad; ///< output position, scale, quaternions, density gradient
     float* particleRadianceGrad;          ///< output spherical harmonics coefficients gradient
+    const unsigned char* lodMask;
 };

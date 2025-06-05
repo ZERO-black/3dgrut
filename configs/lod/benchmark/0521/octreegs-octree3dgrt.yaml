@@ -10,16 +10,17 @@ defaults:
   
 # overwrite of default parameters
 val_frequency: 999999 # never validate
-lod: False
+lod: True
 n_iterations: 0
 
 export_ingp:
   enabled: false
 
-gui: False
+with_gui: False
 path: data/mipnerf360/garden
 out_dir: results/lod/benchmark/0521/ckpt
-experiment_name: 3dgs-3dgrt
-initial_ply: '../dataset/ply-files/3dgs/garden.ply'
+experiment_name: octreegs-octree3dgrt
+initial_ply: '../dataset/ply-files/Octree-AnyGS/garden-rasterization.ply'
+
 dataset:
   downsample_factor: 4

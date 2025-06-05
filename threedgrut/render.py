@@ -25,6 +25,7 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 import threedgrut.datasets as datasets
 from threedgrut.model.model import MixtureOfGaussians
+from threedgrut.model.lod_model import MixtureOfGaussiansWithAnchor
 from threedgrut.utils.logger import logger
 from threedgrut.utils.misc import create_summary_writer
 
@@ -147,11 +148,12 @@ class Renderer:
         writer, out_dir, run_name = create_summary_writer(conf, object_name, conf['out_dir'], experiment_name, use_wandb=False)
 
         if model is None:
-            model = MixtureOfGaussians(conf)
             if (conf.get('lod', False)):
-                model.init_from_ply_with_octree(conf['initial_ply'], init_model=False)
+                ModelClass = MixtureOfGaussiansWithAnchor
             else:
-                model.init_from_ply(conf['initial_ply'], init_model=False)
+                ModelClass = MixtureOfGaussians
+            model = ModelClass(conf)
+            model.init_from_ply(conf['initial_ply'], init_model=False)
         model.build_acc()
 
         return Renderer(

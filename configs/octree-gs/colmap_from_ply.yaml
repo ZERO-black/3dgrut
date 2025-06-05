@@ -12,9 +12,13 @@ defaults:
 val_frequency: 999999 # never validate
 lod: True
 n_iterations: 0
-ingp.enabled: False
-gui: False
+export_ingp:
+  enabled: false
+with_gui: True
 path: data/mipnerf360/garden
 out_dir: results/octree-gs
 experiment_name: garden-octreegs
 initial_ply: '../dataset/ply-files/Octree-AnyGS/garden-rasterization.ply'
+
+dataset:
+  downsample_factor: 4

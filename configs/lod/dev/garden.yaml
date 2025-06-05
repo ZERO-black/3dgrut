@@ -2,24 +2,24 @@
 
 # order in which configs override each other (/* - denotes a relative search path)
 defaults:
-  - /base_gs
+  - /base_octree
   - /dataset: colmap
-  - /initialization: point_cloud
+  - /initialization: colmap
   - /render: 3dgrt
   - _self_
   
 # overwrite of default parameters
 val_frequency: 999999 # never validate
-lod: False
-n_iterations: 0
+lod: True
+n_iterations: 30000
 
 export_ingp:
   enabled: false
 
-gui: False
+with_gui: False
 path: data/mipnerf360/garden
-out_dir: results/lod/benchmark/0521/ckpt
-experiment_name: 3dgs-3dgrt
-initial_ply: '../dataset/ply-files/3dgs/garden.ply'
+out_dir: results/lod/dev/0529/ckpt
+experiment_name: initialization-0529
+
 dataset:
   downsample_factor: 4

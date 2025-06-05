@@ -35,6 +35,7 @@ from threedgrut.datasets.protocols import BoundedMultiViewDataset
 from threedgrut.datasets.utils import MultiEpochsDataLoader, DEFAULT_DEVICE
 from threedgrut.model.losses import ssim
 from threedgrut.model.model import MixtureOfGaussians
+from threedgrut.model.lod_model import MixtureOfGaussiansWithAnchor
 from threedgrut.render import Renderer
 from threedgrut.strategy.base import BaseStrategy
 from threedgrut.utils.gui import GUI
@@ -175,7 +176,10 @@ class Trainer3DGRUT:
 
     def init_model(self, conf: DictConfig, scene_extent=None) -> None:
         """Initializes the gaussian model and the optix context"""
-        self.model = MixtureOfGaussians(conf, scene_extent=scene_extent)
+        if conf.get("lod", False):
+            self.model = MixtureOfGaussiansWithAnchor(conf, scene_extent=scene_extent)
+        else:
+            self.model = MixtureOfGaussians(conf, scene_extent=scene_extent)
 
     def init_densification_and_pruning_strategy(self, conf: DictConfig) -> None:
         """Set pre-train / post-train iteration logic. i.e. densification and pruning"""
@@ -183,12 +187,18 @@ class Trainer3DGRUT:
         match self.conf.strategy.method:
             case "GSStrategy":
                 from threedgrut.strategy.gs import GSStrategy
+
                 self.strategy = GSStrategy(conf, self.model)
                 logger.info("🔆 Using GS strategy")
             case "MCMCStrategy":
                 from threedgrut.strategy.mcmc import MCMCStrategy
                 self.strategy = MCMCStrategy(conf, self.model)
                 logger.info("🔆 Using MCMC strategy")
+            case "OctreeStrategy":
+                from threedgrut.strategy.octree import OctreeStrategy
+
+                self.strategy = OctreeStrategy(conf, self.model)
+                logger.info("🔆 Using Octree strategy")
             case _:
                 raise ValueError(f"unrecognized model.strategy {conf.strategy.method}")
 
@@ -226,10 +236,7 @@ class Trainer3DGRUT:
                 else f"{conf.out_dir}/{conf.experiment_name}/export_last.ply"
             )
             logger.info(f"Loading a ply model from {ply_path}!")
-            if (conf.get('lod', False)):
-                model.init_from_ply_with_octree(ply_path)
-            else:
-                model.init_from_ply(ply_path)
+            model.init_from_ply(ply_path)
             self.strategy.init_densification_buffer()
             model.build_acc()
             global_step = conf.import_ply.init_global_step
@@ -392,7 +399,7 @@ class Trainer3DGRUT:
         rgb_gt = gpu_batch.rgb_gt
         rgb_pred = outputs["pred_rgb"]
         mask = gpu_batch.mask
-        
+
         # Mask out the invalid pixels if the mask is provided
         if mask is not None:
             rgb_gt = rgb_gt * mask

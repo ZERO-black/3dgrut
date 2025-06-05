@@ -85,12 +85,16 @@ class Tracer:
                 or self.num_update_bvh >= self.conf.render.max_consecutive_bvh_update
             )
             self.tracer_wrapper.build_bvh(
-                gaussians.positions.view(-1, 3).contiguous(),
-                gaussians.rotation_activation(gaussians.rotation).view(-1, 4).contiguous(),
+                gaussians.get_positions().view(-1, 3).contiguous(),
+                gaussians.rotation_activation(gaussians.rotation)
+                .view(-1, 4)
+                .contiguous(),
                 gaussians.scale_activation(gaussians.scale).view(-1, 3).contiguous(),
-                gaussians.density_activation(gaussians.density).view(-1, 1).contiguous(),
+                gaussians.density_activation(gaussians.density)
+                .view(-1, 1)
+                .contiguous(),
                 rebuild_bvh,
-                allow_bvh_update
+                allow_bvh_update,
             )
             self.num_update_bvh = 0 if rebuild_bvh else self.num_update_bvh + 1
 
@@ -111,7 +115,7 @@ class Tracer:
         frame_id=0
     ):
         assert ('rays_o_cam' in gpu_batch) and ('rays_d_cam' in gpu_batch) and ('poses' in gpu_batch)
-        
+
         num_gaussians = gaussians.num_gaussians
         with torch.cuda.nvtx.range(f"model.forward({num_gaussians} gaussians)"):
             # The feature mask zeros out feature dims the model shouldn't use yet.
@@ -120,7 +124,7 @@ class Tracer:
             if gaussians.progressive_training:
                 features *= gaussians.get_active_feature_mask()
 
-            mog_pos = gaussians.positions.contiguous()
+            mog_pos = gaussians.get_positions().contiguous()
             mog_dns = gaussians.get_density().contiguous()
             mog_rot = gaussians.get_rotation().contiguous()
             mog_scl = gaussians.get_scale().contiguous()

@@ -74,9 +74,6 @@ protected:
         float particleKernelMinResponse;
         bool particleKernelDensityClamping;
         int particleRadianceSphDegree;
-        // LoD
-        bool enableLoD;
-        float lodStdDist;
 
         uint32_t gNum;         ///< current number of gaussians
         uint32_t gPrimType;    ///< type of the prim [0 : octahedron 1 : tetrahedron]
@@ -102,14 +99,12 @@ protected:
         OptixModule moduleTracingBwd;
     }* _state;
 
-     std::vector<std::string> generateDefines(
+    virtual std::vector<std::string> generateDefines(
         float particleKernelDegree,
         bool particleKernelDensityClamping,
         int particleRadianceSphDegree,
         bool enableNormals,
-        bool enableHitCounts,
-        bool enableLod = false
-    );
+        bool enableHitCounts);
     void createPipeline(const OptixDeviceContext context,
                         const std::string& path,
                         const std::string& dependencies_path,
@@ -120,7 +115,7 @@ protected:
                         OptixModule* module,
                         OptixPipeline* pipeline,
                         OptixShaderBindingTable& sbt,
-                        uint32_t numPayloadValues = 32,
+                        uint32_t numPayloadValues                      = 32,
                         const std::vector<std::string>& extra_includes = {});
     void reallocateBuffer(CUdeviceptr* bufferPtr, size_t& size, size_t newSize, cudaStream_t cudaStream);
     void reallocatePrimGeomBuffer(cudaStream_t stream);
@@ -140,23 +135,19 @@ public:
         bool particleKernelDensityClamping,
         int particleRadianceSphDegree,
         bool enableNormals,
-        bool enableHitCounts,
-        bool enableLoD = false);
+        bool enableHitCounts);
 
     virtual ~OptixTracer();
 
-    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
-    virtual trace(uint32_t frameNumber,
-                  torch::Tensor rayToWorld,
-                  torch::Tensor rayOri,
-                  torch::Tensor rayDir,
-                  torch::Tensor particleDensity,
-                  torch::Tensor particleRadiance,
-                  torch::Tensor particleLevels,
-                  torch::Tensor particleExtraLevels,
-                  uint32_t renderOpts,
-                  int sphDegree,
-                  float minTransmittance);
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> virtual trace(uint32_t frameNumber,
+                                                                                                                       torch::Tensor rayToWorld,
+                                                                                                                       torch::Tensor rayOri,
+                                                                                                                       torch::Tensor rayDir,
+                                                                                                                       torch::Tensor particleDensity,
+                                                                                                                       torch::Tensor particleRadiance,
+                                                                                                                       uint32_t renderOpts,
+                                                                                                                       int sphDegree,
+                                                                                                                       float minTransmittance);
 
     std::tuple<torch::Tensor, torch::Tensor>
     virtual traceBwd(uint32_t frameNumber,
@@ -183,6 +174,4 @@ public:
                           torch::Tensor mogDns,
                           unsigned int rebuild,
                           bool allow_update);
-
-    void updateLodStdDist(float dist);
 };
