@@ -74,12 +74,18 @@ checkpoint:
   iterations: ${int_list:[ 7000, 30000 ]}
 
 optimizer:
-  type: selective_adam # We only support adam and selective_adam for now
+  type: adam # We only support adam and selective_adam for now
   lr: 0.0
   eps: 1.e-15
   params:
-    positions:
-      lr: 0.00016 # 3DGS value: 0.00016 initial and decayed to 0.0000016
+    # positions:
+    #   lr: 0.00016 # 3DGS value: 0.00016 initial and decayed to 0.0000016
+    anchor:
+      lr: 0
+    offset:
+      lr: 0.01
+    offset_scale:
+      lr: 0.005
     density:
       lr: 0.05 # 3DGS value: 0.05
     features_albedo:
@@ -92,13 +98,17 @@ optimizer:
       lr: 0.005 # 3DGS value: 0.005
 
 scheduler:
-  positions:
-    # In the 3DGS paper they additionally have a parameter lr_delay_mult, but is is not being used so I drop it here
+  # positions:
+  #   # In the 3DGS paper they additionally have a parameter lr_delay_mult, but is is not being used so I drop it here
+  #   type: exp
+  #   lr_init: ${optimizer.params.positions.lr}
+  #   lr_final: 0.0000016
+    # max_steps: 30000
+    
+  offset:
+    lr_init: ${optimizer.params.offset.lr}
+    lr_final: 0.0001
     type: exp
-    lr_init: ${optimizer.params.positions.lr}
-    lr_final: 0.0000016
-
-    max_steps: 30000
 
   density:
     type: skip

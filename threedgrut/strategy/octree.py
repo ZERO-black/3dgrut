@@ -17,6 +17,8 @@ class OctreeStrategy(GSStrategy):
         self.extra_up = self.conf.strategy.densify.extra_up
         self.allow_overlap = self.conf.strategy.densify.allow_overlap
         self.densify_threshold = self.conf.strategy.densify.grad_threshold
+        self.prune_density_threshold = self.conf.strategy.prune.density_threshold
+
         self.progressive = True
         self.coarse_intervals = []
 
@@ -41,7 +43,6 @@ class OctreeStrategy(GSStrategy):
                     temp_interval = interval
                     self.coarse_intervals.append(interval)
 
-
     @torch.cuda.nvtx.range("update-gradient-buffer")
     def update_gradient_buffer(self, sensor_position: torch.Tensor) -> None:
         params_grad = self.model.anchor.grad
@@ -63,10 +64,16 @@ class OctreeStrategy(GSStrategy):
             self.densify_gaussians(step, scene_extent=scene_extent)
             scene_updated = True
 
-        # # Prune the Gaussians based on their opacity
-        # if check_step_condition(step, self.conf.strategy.prune.start_iteration, self.conf.strategy.prune.end_iteration, self.conf.strategy.prune.frequency):
-        #     self.prune_gaussians_opacity()
-        #     scene_updated = True
+        # Prune the Gaussians based on their opacity
+        if check_step_condition(
+            step,
+            self.conf.strategy.prune.start_iteration,
+            self.conf.strategy.prune.end_iteration,
+            self.conf.strategy.prune.frequency,
+        ):
+            self.prune_gaussians_opacity()
+            scene_updated = True
+        self.reset_densification_buffers()
 
         # # Prune the Gaussians based on their scales
         # if check_step_condition(step, self.conf.strategy.prune_scale.start_iteration, self.conf.strategy.prune_scale.end_iteration, self.conf.strategy.prune_scale.frequency):
@@ -85,8 +92,6 @@ class OctreeStrategy(GSStrategy):
 
     @torch.cuda.nvtx.range("densify_gaussians")
     def densify_gaussians(self, step, scene_extent):
-        print("densification----------------------------------------")
-
         assert self.model.optimizer is not None, "Optimizer need to be initialized before splitting and cloning the Gaussians"
         densify_grad_norm = self.densify_grad_norm_accum / self.densify_grad_norm_denom
         densify_grad_norm[densify_grad_norm.isnan()] = 0.0
@@ -96,7 +101,7 @@ class OctreeStrategy(GSStrategy):
             anchor_grads=densify_grad_norm.squeeze(1),  # [N]
         )
         torch.cuda.empty_cache()
-    
+
     @torch.cuda.nvtx.range("grow_anchor")
     def grow_anchor(self,
                     iteration: int,
@@ -105,6 +110,7 @@ class OctreeStrategy(GSStrategy):
         # 1) prune된 앵커들은 gradient 0으로
         anchor_grads = anchor_grads.clone()
         anchor_grads[~self.anchor_mask] = 0.0
+        init_shape = self.model.num_gaussians
 
         for cur_level in range(self.model.max_level):
             # 2) 현재 레벨 앵커
@@ -140,7 +146,7 @@ class OctreeStrategy(GSStrategy):
             # 7) extra_level 업데이트
             if (not self.progressive) or (iteration > self.coarse_intervals[-1]):
                 extra_mask = (anchor_grads >= extra_threshold) & level_mask
-                self.model.extra_level[extra_mask] += extra_up
+                self.model.extra_level[extra_mask] += self.extra_up
 
             # ------------------------------------------------------------
             # 8) 같은 레벨 후보 앵커 좌표 뽑기
@@ -161,6 +167,11 @@ class OctreeStrategy(GSStrategy):
             selected_grid_coords_unique, inverse_indices = torch.unique(
                 selected_grid_coords, return_inverse=True, dim=0
             )  # [U1,3], [M1]
+            unique_mask = torch.zeros(selected_grid_coords.shape[0], dtype=torch.bool)
+            unique_mask[inverse_indices] = True
+            selected_features_unique = self.model.get_features()[candidate_same_level][
+                unique_mask
+            ]
 
             if self.allow_overlap:
                 remove_dup = torch.ones(
@@ -184,6 +195,7 @@ class OctreeStrategy(GSStrategy):
                 )
                 remove_dup_clone = remove_dup.clone()
                 remove_dup[remove_dup_clone] = weed_mask
+                selected_features_unique = selected_features_unique[weed_mask]
 
             elif (selected_grid_coords_unique.shape[0] > 0 and grid_coords.shape[0] > 0):
                 remove_dup_init = self.model.get_remove_duplicates(
@@ -206,7 +218,7 @@ class OctreeStrategy(GSStrategy):
                 )
                 remove_dup_clone = remove_dup.clone()
                 remove_dup[remove_dup_clone] = weed_mask
-
+                selected_features_unique = selected_features_unique[weed_mask]
             else:
                 candidate_anchor = torch.zeros(
                     (0, 3), dtype=torch.float, device="cuda"
@@ -218,6 +230,9 @@ class OctreeStrategy(GSStrategy):
                 )
                 new_level = torch.zeros(
                     (0,), dtype=torch.int, device="cuda"
+                )
+                selected_features_unique = torch.zeros(
+                    (0, 3), dtype=torch.float, device="cuda"
                 )
 
             # ------------------------------------------------------------
@@ -233,6 +248,15 @@ class OctreeStrategy(GSStrategy):
             selected_grid_coords_unique_ds, inverse_indices_ds = torch.unique(
                 selected_grid_coords_ds, return_inverse=True, dim=0
             )  # [U2,3], [M2]
+
+            unique_mask = torch.zeros(
+                selected_grid_coords_ds.shape[0], dtype=torch.bool
+            )
+            unique_mask[inverse_indices_ds] = True
+
+            selected_features_unique_ds = self.model.get_features()[
+                candidate_down_level
+            ][unique_mask]
 
             if (~self.progressive or iteration > self.coarse_intervals[-1]) and (cur_level < self.model.max_level - 1):
                 if self.allow_overlap:
@@ -255,6 +279,9 @@ class OctreeStrategy(GSStrategy):
                     )
                     remove_dup_ds_clone = remove_dup_ds.clone()
                     remove_dup_ds[remove_dup_ds_clone] = weed_ds_mask
+                    selected_features_unique_ds = selected_features_unique_ds[
+                        weed_ds_mask
+                    ]
 
                 elif (selected_grid_coords_unique_ds.shape[0] > 0 and
                     grid_coords_ds.shape[0] > 0):
@@ -277,6 +304,9 @@ class OctreeStrategy(GSStrategy):
                     )
                     remove_dup_ds_clone = remove_dup_ds.clone()
                     remove_dup_ds[remove_dup_ds_clone] = weed_ds_mask
+                    selected_features_unique_ds = selected_features_unique_ds[
+                        weed_ds_mask
+                    ]
 
                 else:
                     candidate_anchor_ds = torch.zeros(
@@ -289,6 +319,9 @@ class OctreeStrategy(GSStrategy):
                     new_level_ds = torch.zeros(
                         (0,), dtype=torch.int, device="cuda"
                     )
+                    selected_features_unique_ds = torch.zeros(
+                        (0, 3), dtype=torch.float, device="cuda"
+                    )
             else:
                 candidate_anchor_ds = torch.zeros(
                     (0, 3), dtype=torch.float, device="cuda"
@@ -299,6 +332,9 @@ class OctreeStrategy(GSStrategy):
                 )
                 new_level_ds = torch.zeros(
                     (0,), dtype=torch.int, device="cuda"
+                )
+                selected_features_unique_ds = torch.zeros(
+                    (0, 3), dtype=torch.float, device="cuda"
                 )
 
             # ------------------------------------------------------------
@@ -313,10 +349,11 @@ class OctreeStrategy(GSStrategy):
 
             # --------------------------------------------------------
             # 14) 새 SH feature (k=1)이므로 간단히 Boolean 인덱싱
-            combined_mask = (candidate_same_level | candidate_down_level)  # [N]
-            new_features = self.model.get_features()[combined_mask]               # [M_new, F, 3]
-            new_features_albedo   = new_features[:1, :]   # [M_new,1,3]
-            new_features_specular = new_features[1: :]    # [M_new,F-1,3]
+            new_features = torch.cat(
+                [selected_features_unique, selected_features_unique_ds], dim=0
+            )  # [M_new, F, 3]
+            new_features_albedo = new_features[:, :3]  # [M_new,1,3]
+            new_features_specular = new_features[:, 3:]  # [M_new,F-1,3]
 
             # --------------------------------------------------------
             # 15) 새 Opacity 초기화
@@ -345,44 +382,83 @@ class OctreeStrategy(GSStrategy):
             new_extra_level = torch.zeros((M_new,), device="cuda")  # [M_new]
 
             # --------------------------------------------------------
-            # 20) anchor_demon, opacity_accum, anchor_mask 확장
-            self.anchor_demon = torch.cat([
-                self.anchor_demon,
-                torch.zeros((M_new, 1), device="cuda")
-            ], dim=0)  # [N+M_new,1]
+            # 20) 파라미터 업데이트: split_gaussians 스타일 (_update_param_with_optimizer)
+            def update_param_fn(name: str, param: torch.Tensor) -> torch.Tensor:
+                # param은 self.model.<name>의 기존 파라미터 텐서
+                if name == "anchor":
+                    return torch.nn.Parameter(
+                        torch.cat([param, new_anchor]),
+                        requires_grad=param.requires_grad,
+                    )
+                elif name == "scale":
+                    return torch.nn.Parameter(
+                        torch.cat([param, new_scale]), requires_grad=param.requires_grad
+                    )
+                elif name == "rotation":
+                    return torch.nn.Parameter(
+                        torch.cat([param, new_rotation]),
+                        requires_grad=param.requires_grad,
+                    )
+                elif name == "features_albedo":
+                    return torch.nn.Parameter(
+                        torch.cat([param, new_features_albedo]),
+                        requires_grad=param.requires_grad,
+                    )
+                elif name == "features_specular":
+                    return torch.nn.Parameter(
+                        torch.cat([param, new_features_specular]),
+                        requires_grad=param.requires_grad,
+                    )
+                elif name == "offset":
+                    return torch.nn.Parameter(
+                        torch.cat([param, new_offset]),
+                        requires_grad=param.requires_grad,
+                    )
+                elif name == "offset_scale":
+                    return torch.nn.Parameter(
+                        torch.cat([param, new_offset_scale]),
+                        requires_grad=param.requires_grad,
+                    )
+                elif name == "density":
+                    return torch.nn.Parameter(
+                        torch.cat([param, new_density]),
+                        requires_grad=param.requires_grad,
+                    )
+                else:
+                    # 다른 파라미터는 그대로 반환
+                    return param
 
-            self.opacity_accum = torch.cat([
-                self.opacity_accum,
-                torch.zeros((M_new, 1), device="cuda")
-            ], dim=0)  # [N+M_new,1]
+            def update_optimizer_fn(key: str, v: torch.Tensor) -> torch.Tensor:
+                # v는 optimizer.state[p][buffer] (예: exp_avg, exp_avg_sq) 텐서
+                pad_shape = (M_new, *v.shape[1:])
+                padding = torch.zeros(pad_shape, device=v.device)
+                return torch.cat([v, padding], dim=0)
 
-            new_mask = torch.ones((M_new,), dtype=torch.bool, device="cuda")
-            self.anchor_mask = torch.cat([self.anchor_mask, new_mask], dim=0)  # [N+M_new]
+            # 실제 호출: 신규 파라미터(위 update_param_fn으로) 추가하고
+            # optimizer 내부 exp_avg/exp_avg_sq까지 확장
+            self._update_param_with_optimizer(update_param_fn, update_optimizer_fn)
 
-            torch.cuda.empty_cache()
+            # 21) level, extra_level만 따로 직접 concatenate
+            self.model.level = torch.cat(
+                [self.model.level, new_level], dim=0
+            )  # [N+M_new,1]
+            self.model.extra_level = torch.cat(
+                [self.model.extra_level, new_extra_level], dim=0
+            )  # [N+M_new]
+            anchor_grads = torch.cat(
+                [anchor_grads, torch.zeros((M_new,), device="cuda")], dim=0
+            )
 
-            # --------------------------------------------------------
-            # 21) 파라미터 텐서 전체 업데이트 (cat_tensors_to_optimizer 사용)
-            d = {
-                "anchor"       : new_anchor,         # [M_new,3]
-                "scale"        : new_scale,        # [M_new,3]
-                "rotation"     : new_rotation,       # [M_new,4]
-                "features_albedo"  : new_features_albedo,    # [M_new,1,3]
-                "features_specular": new_features_specular,  # [M_new,F-1,3]
-                "offset"       : new_offset,        # [M_new,3]
-                "offset_scale"       : new_offset_scale,        # [M_new,3]
-                "density"      : new_density       # [M_new,1]
-            }
-
-            optimizable_tensors = self.cat_tensors_to_optimizer(d)
-            self.model.anchor        = optimizable_tensors["anchor"]        # [N+M_new,3]
-            self.model.scale       = optimizable_tensors["scaling"]       # [N+M_new,3]
-            self.model.rotation      = optimizable_tensors["rotation"]      # [N+M_new,4]
-            self.model.features_albedo   = optimizable_tensors["features_dc"]   # [N+M_new,1,3]
-            self.model.features_specular = optimizable_tensors["features_rest"] # [N+M_new,F-1,3]
-            self.model.offset        = optimizable_tensors["offset"]        # [N+M_new,3]
-            self.model.offset_scale        = optimizable_tensors["scale"]        # [N+M_new,3]
-            self.model.density       = optimizable_tensors["density"]       # [N+M_new,1]
-
-            self.model.level       = torch.cat([self.model.level, new_level], dim=0)       # [N+M_new,1]
-            self.model.extra_level = torch.cat([self.model.extra_level, new_extra_level], dim=0)  # [N+M_new]
+            if self.conf.strategy.print_stats:
+                n_before = init_shape
+                n_after = self.model.num_gaussians
+                logger.info(
+                    f"[Level:{cur_level}] Anchor growed {n_before} -> {n_after} ({n_after/n_before*100:.2f}%) gaussians"
+                )
+        self.reset_densification_buffers()
+        if self.conf.strategy.print_stats:
+            n_before = init_shape
+            n_after = self.model.num_gaussians
+            logger.info(
+                f"[TOTAL] Anchor growed {n_before} -> {n_after} ({n_after/n_before*100:.2f}%) gaussians"
+            )
