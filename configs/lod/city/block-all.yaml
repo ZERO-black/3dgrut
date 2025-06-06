@@ -11,14 +11,14 @@ defaults:
 # overwrite of default parameters
 val_frequency: 999999 # never validate
 lod: False
-n_iterations: 30000
+n_iterations: 60000
 
 export_ingp:
   enabled: false
 
-gui: False
-path: data/MatrixCity/small_city/aerial/pose/block_all
+with_gui: False
+path: data/MatrixCity/pose/block_all
 out_dir: results/lod/city/0526/block_all
-experiment_name: 3dgrt-3dgrt
+experiment_name: 3dgrt-3dgrt-60000
 dataset:
   downsample_factor: 1
