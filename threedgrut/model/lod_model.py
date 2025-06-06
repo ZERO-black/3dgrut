@@ -184,7 +184,7 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         logger.info(f'Min Voxel Size: {self.voxel_size/(2.0 ** (self.max_level - 1))}')
         logger.info(f'Max Voxel Size: {self.voxel_size}')
 
-        fused_point_cloud, fused_color = self.pos, RGB2SH(self.colors)
+        fused_point_cloud, fused_color = self.pos, RGB2SH(self.colors / 255.0)
         n_features = sh_degree_to_specular_dim(self.max_n_features)
         offsets = torch.zeros((fused_point_cloud.shape[0], 3)).float().cuda()
         features = torch.zeros((fused_color.shape[0], 3 + n_features)).float().cuda()
