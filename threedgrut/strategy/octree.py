@@ -73,7 +73,6 @@ class OctreeStrategy(GSStrategy):
         ):
             self.prune_gaussians_opacity()
             scene_updated = True
-        self.reset_densification_buffers()
 
         # # Prune the Gaussians based on their scales
         # if check_step_condition(step, self.conf.strategy.prune_scale.start_iteration, self.conf.strategy.prune_scale.end_iteration, self.conf.strategy.prune_scale.frequency):
@@ -462,3 +461,8 @@ class OctreeStrategy(GSStrategy):
             logger.info(
                 f"[TOTAL] Anchor growed {n_before} -> {n_after} ({n_after/n_before*100:.2f}%) gaussians"
             )
+
+    def prune_densification_buffers(self, mask):
+        super().prune_densification_buffers(mask)
+        self.model.level = self.model.level[mask]
+        self.model.extra_level = self.model.extra_level[mask]
