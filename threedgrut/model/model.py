@@ -37,6 +37,8 @@ from threedgrut.utils.misc import (
 )
 from threedgrut.utils.render import RGB2SH
 from threedgrut.optimizers import SelectiveAdam
+from omegaconf import OmegaConf
+
 
 class MixtureOfGaussians(torch.nn.Module):
     """ """
@@ -140,7 +142,13 @@ class MixtureOfGaussians(torch.nn.Module):
             torch.empty([0, specular_dim])
         )  # Features of the higher order SH coefficients [n_gaussians, specular_dim]
         self.max_sh_degree = sh_degree
+        self.levels = torch.nn.Parameter(torch.empty([0, 1]), requires_grad=False)
+        self.extra_levels = torch.nn.Parameter(torch.empty([0, 1]), requires_grad=False)
+        self.std_dist = 0
 
+        OmegaConf.set_struct(conf, False)
+        conf['lod'] = conf.get('lod', False)
+        OmegaConf.set_struct(conf, True)
         self.conf = conf
         self.scene_extent = scene_extent
         self.positions_gradient_norm = None
@@ -167,7 +175,10 @@ class MixtureOfGaussians(torch.nn.Module):
 
         # Rendering method
         if conf.render.method == "3dgrt":
-           self.renderer = threedgrt_tracer.Tracer(conf)
+            if conf.lod:
+                self.renderer = threedgrt_tracer.LoDTracer(conf)
+            else:
+                self.renderer = threedgrt_tracer.Tracer(conf)
         elif conf.render.method == "3dgut":
             self.renderer = threedgut_tracer.Tracer(conf)
         else:

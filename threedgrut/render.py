@@ -25,6 +25,7 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 import threedgrut.datasets as datasets
 from threedgrut.model.model import MixtureOfGaussians
+from threedgrut.model.lod_model import MixtureOfGaussiansWithAnchor
 from threedgrut.utils.logger import logger
 from threedgrut.utils.misc import create_summary_writer
 
@@ -123,6 +124,48 @@ class Renderer:
             compute_extra_metrics=compute_extra_metrics,
         )
 
+    @classmethod
+    def from_ply(self, config_path, path="", save_gt=True, writer=None, model=None, computes_extra_metrics=True):
+        def load_default_config():
+            from hydra.compose import compose
+            from hydra.initialize import initialize
+            with initialize(version_base=None, config_path='../configs'):
+                conf = compose(config_name=config_path)
+            return conf
+        
+        global_step = 0
+
+        conf = load_default_config()
+
+        # overrides
+        if conf["render"]["method"] == "3dgrt":
+            conf["render"]["particle_kernel_density_clamping"] = True
+            conf["render"]["min_transmittance"] = 0.03
+        conf["render"]["enable_kernel_timings"] = True
+
+        object_name = Path(conf.path).stem
+        experiment_name = conf["experiment_name"]
+        writer, out_dir, run_name = create_summary_writer(conf, object_name, conf['out_dir'], experiment_name, use_wandb=False)
+
+        if model is None:
+            if (conf.get('lod', False)):
+                ModelClass = MixtureOfGaussiansWithAnchor
+            else:
+                ModelClass = MixtureOfGaussians
+            model = ModelClass(conf)
+            model.init_from_ply(conf['initial_ply'], init_model=False)
+        model.build_acc()
+
+        return Renderer(
+            model=model,
+            conf=conf,
+            global_step=global_step,
+            out_dir=out_dir,
+            path=path,
+            save_gt=save_gt,
+            writer=writer,
+            compute_extra_metrics=computes_extra_metrics,
+        )
     @torch.no_grad()
     def render_all(self):
         """Render all the images in the test dataset and log the metrics."""
@@ -191,7 +234,7 @@ class Renderer:
             # Compute the loss
             psnr_single_img = criterions["psnr"](outputs["pred_rgb"], gpu_batch.rgb_gt).item()
             psnr.append(psnr_single_img)  # evaluation on valid rays only
-            logger.info(f"Frame {iteration}, PSNR: {psnr[-1]}")
+            logger.info(f"Frame {iteration}, PSNR: {psnr[-1]} inference time: {outputs['frame_time_ms']}ms")
 
             if psnr_single_img > best_psnr:
                 best_psnr = psnr_single_img

@@ -14,5 +14,6 @@
 # limitations under the License.
 
 from .tracer import (Tracer)
+from .lod_tracer import (LoDTracer)
 
-__all__ = ["Tracer"]
+__all__ = ["Tracer", "LoDTracer"]

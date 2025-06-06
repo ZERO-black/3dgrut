@@ -1069,7 +1069,10 @@ class Engine3DGRUT:
         elif object_path.endswith('.ply'):
             conf = load_default_config()
             model = MixtureOfGaussians(conf)
-            model.init_from_ply(object_path, init_model=False)
+            if (conf.get('lod', False)):
+                model.init_from_ply_with_octree(object_path, init_model=False)
+            else:
+                model.init_from_ply(object_path, init_model=False)
             object_name = Path(object_path).stem
         else:
             raise ValueError(f"Unknown object type: {object_path}")

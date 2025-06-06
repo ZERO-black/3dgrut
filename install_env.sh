@@ -86,6 +86,7 @@ if [ "$WITH_GCC11" = true ]; then
 fi
 GCC_VERSION=$($GCC_11_PATH -dumpversion | cut -d '.' -f 1)
 
+source ~/anaconda3/etc/profile.d/conda.sh
 # Create and activate conda environment
 eval "$(conda shell.bash hook)"
 

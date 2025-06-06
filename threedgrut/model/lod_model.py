@@ -1,0 +1,294 @@
+
+import os, math
+import torch
+from torch_scatter import scatter_max
+import numpy as np
+from plyfile import PlyData, PlyElement
+
+from threedgrut.datasets.utils import read_next_bytes, read_colmap_points3D_text
+from threedgrut.model.model import MixtureOfGaussians 
+from threedgrut.utils.logger import logger
+from threedgrut.utils.misc import (
+    get_activation_function,
+    get_scheduler,
+    sh_degree_to_num_features,
+    sh_degree_to_specular_dim,
+    to_np, to_torch, quaternion_to_so3
+)
+from threedgrut.utils.render import RGB2SH
+from threedgrut.utils.knn import knn
+
+class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
+    @property
+    def num_gaussians(self):
+        return self.density.shape[0]
+    
+    def get_positions(self) -> torch.Tensor:
+        return self.anchor + self.offset * self.get_offset_scale()
+    
+    def get_anchor(self) -> torch.Tensor:
+        return self.anchor
+    
+    def get_offset(self) -> torch.Tensor:
+        return self.offset
+    
+    def get_offset_scale(self, preactivation=False) -> torch.Tensor:
+        if preactivation:
+            return self.offset_scale
+        else:
+            return self.scale_activation(self.offset_scale)
+    
+    def get_levels(self) -> torch.Tensor:
+        return self.level
+
+    def get_extra_levels(self) -> torch.Tensor:
+        return self.extra_level
+    
+    def get_num_gaussians(self) -> int:
+        return len(self.density)
+    
+    def get_anchor_masks(self)-> torch.Tensor:
+        return self.anchor_mask
+    
+    def map_to_int_level(self, pred_level, cur_level):
+        int_level = torch.round(pred_level).int()
+        int_level = torch.clamp(int_level, min=0, max=cur_level)
+        return int_level
+
+    def get_model_parameters(self) -> dict:
+        params = super().get_model_parameters()
+        del params["positions"]
+        return params
+
+    def __init__(self, conf, scene_extent=None):
+        # Rendering method
+        if conf.render.method == "3dgut":
+            raise ValueError(f"Unsupported type with lod!")
+        
+        super().__init__(conf, scene_extent)
+        if "positions" in self._parameters:
+            del self._parameters["positions"]
+
+    def validate_fields(self):
+        num_gaussians = self.num_gaussians
+        # assert self.positions.shape == (num_gaussians, 3)
+        # assert self.anchor.shape == (num_gaussians, 3)
+        # assert self.offset.shape == (num_gaussians, 3)
+        assert self.density.shape == (num_gaussians, 1)
+        assert self.rotation.shape == (num_gaussians, 4)
+        assert self.scale.shape == (num_gaussians, 3)
+
+        if self.feature_type == "sh":
+            assert self.features_albedo.shape == (num_gaussians, 3)
+            specular_sh_dims = sh_degree_to_specular_dim(self.max_n_features)
+            assert self.features_specular.shape == (num_gaussians, specular_sh_dims)
+        else:
+            raise ValueError("Neural features not yet supported.")
+
+    def set_level(self, points, cameras):
+        all_dist = torch.tensor([]).cuda()
+        self.cam_infos = torch.empty(0, 4).float().cuda()
+
+        for cam in cameras:
+            cam_info = torch.tensor((cam[0], cam[1], cam[2], 1)).float().cuda()
+            self.cam_infos = torch.cat((self.cam_infos, cam_info.unsqueeze(dim=0)), dim=0)
+            dist = torch.sqrt(torch.sum((points - cam)**2, dim=1))
+            dist_max = torch.quantile(dist, self.dist_ratio)
+            dist_min = torch.quantile(dist, 1 - self.dist_ratio)
+            new_dist = torch.tensor([dist_min, dist_max]).float().cuda()
+            new_dist = new_dist
+            all_dist = torch.cat((all_dist, new_dist), dim=0)
+        
+        dist_max = torch.quantile(all_dist, self.dist_ratio)
+        dist_min = torch.quantile(all_dist, 1 - self.dist_ratio)
+        self.std_dist = float(dist_max)
+        if self.max_level == -1:
+            self.max_level = torch.round(torch.log2(dist_max/dist_min)/math.log2(self.fork)).int().item() + 1
+        if self.init_level == -1:
+            self.init_level = int(self.max_level/2)
+
+    def octree_sample(self, points, colors):
+        torch.cuda.synchronize()
+        self.pos = torch.empty(0, 3).float().cuda()
+        self.colors = torch.empty(0, 3).float().cuda()
+        self.level = torch.empty(0).int().cuda() 
+
+        for cur_level in range(self.max_level):
+            cur_size = self.voxel_size/(float(self.fork) ** cur_level)
+            new_candidates = torch.round((points - self.init_pos) / cur_size)
+            new_candidates_unique, inverse_indices = torch.unique(new_candidates, return_inverse=True, dim=0)
+            new_positions = new_candidates_unique * cur_size + self.init_pos
+            new_positions += self.padding * cur_size
+            new_levels = torch.ones(new_positions.shape[0], dtype=torch.int, device="cuda") * cur_level
+            new_colors = scatter_max(colors, inverse_indices.unsqueeze(1).expand(-1, colors.size(1)), dim=0)[0]
+            self.pos = torch.concat((self.pos, new_positions), dim=0)
+            self.colors = torch.concat((self.colors, new_colors), dim=0)
+            self.level = torch.concat((self.level, new_levels), dim=0)
+        torch.cuda.synchronize()
+    
+    def weed_out(self, gaussian_positions, gaussian_levels):
+        visible_count = torch.zeros(gaussian_positions.shape[0], dtype=torch.int, device="cuda")
+        for cam in self.cam_infos:
+            cam_center, scale = cam[:3], cam[3]
+            dist = torch.sqrt(torch.sum((gaussian_positions - cam_center)**2, dim=1)) * scale
+            pred_level = torch.log2(self.std_dist/dist)/math.log2(self.fork)   
+            int_level = self.map_to_int_level(pred_level, self.max_level - 1)
+            visible_count += (gaussian_levels <= int_level).int()
+        visible_count = visible_count/len(self.cam_infos)
+        weed_mask = (visible_count > self.visible_threshold)
+        mean_visible = torch.mean(visible_count)
+        return gaussian_positions[weed_mask], gaussian_levels[weed_mask], mean_visible, weed_mask
+    
+    def default_initialize_from_points(self, pts, observer_pts, colors=None, use_observer_pts=True):
+        # hyper parameter
+        self.max_level = -1
+        self.init_level = -1
+        self.extend = 1.1
+        self.base_layer = 11
+        self.fork = 2
+        self.default_voxel_size = 0.02
+        self.padding = 0.0
+        self.visible_threshold = 0.9
+        self.dist_ratio = 0.999
+        self.n_offsets = 1
+
+        self.set_level(pts, observer_pts)
+        # unknown
+        # self.spatial_lr_scale = spatial_lr_scale
+        
+        box_min = torch.min(pts)*self.extend
+        box_max = torch.max(pts)*self.extend
+        box_d = box_max - box_min
+        print(box_d)
+        if self.base_layer < 0:
+            self.base_layer = torch.round(torch.log2(box_d/self.default_voxel_size)).int().item()-(self.max_level//2)+1
+
+        self.voxel_size = box_d/(float(self.fork) ** self.base_layer)
+        self.init_pos = torch.tensor([box_min, box_min, box_min]).float().cuda()
+        self.octree_sample(pts, colors)
+
+        if self.visible_threshold < 0:
+            self.visible_threshold = 0.0
+            self.pos, self.level, self.visible_threshold, _ = self.weed_out(self.pos, self.level)
+        self.pos, self.level, _, weed_mask = self.weed_out(self.pos, self.level)
+        self.colors = self.colors[weed_mask]
+
+        logger.info(f'Branches of Tree: {self.fork}')
+        logger.info(f'Base Layer of Tree: {self.base_layer}')
+        logger.info(f'Visible Threshold: {self.visible_threshold}')
+        logger.info(f'LOD Levels: {self.max_level}')
+        logger.info(f'Initial Levels: {self.init_level}')
+        logger.info(f'Initial Voxel Number: {self.pos.shape[0]}')
+        logger.info(f'Min Voxel Size: {self.voxel_size/(2.0 ** (self.max_level - 1))}')
+        logger.info(f'Max Voxel Size: {self.voxel_size}')
+
+        fused_point_cloud, fused_color = self.pos, RGB2SH(self.colors)
+        n_features = sh_degree_to_specular_dim(self.max_n_features)
+        offsets = torch.zeros((fused_point_cloud.shape[0], 3)).float().cuda()
+        features = torch.zeros((fused_color.shape[0], 3 + n_features)).float().cuda()
+        features[:, :3] = fused_color
+        features_albedo, features_specular = torch.split(features, [3, n_features], dim=1)
+
+        dist2 = (knn(fused_point_cloud, 4)[:, 1:] ** 2).mean(dim=-1)  # [N,]
+        scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 6)
+        rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
+        rots[:, 0] = 1
+        opacities = self.density_activation_inv(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
+
+        self.anchor = torch.nn.Parameter(fused_point_cloud)
+        self.offset =  torch.nn.Parameter(offsets)
+        self.offset_scale = torch.nn.Parameter(scales[:, :3])     
+        self.features_albedo = torch.nn.Parameter(features_albedo)
+        self.features_specular = torch.nn.Parameter(features_specular)
+        self.scale = torch.nn.Parameter(scales[:, 3:])
+        self.rotation = torch.nn.Parameter(rots)
+        self.density = torch.nn.Parameter(opacities)
+        self.level = self.level.unsqueeze(dim=1).float()
+        self.extra_level = torch.zeros(self.num_gaussians, dtype=torch.float, device="cuda")
+        self.anchor_mask = torch.ones(self.num_gaussians, dtype=torch.bool, device="cuda")
+        
+        self.positions = self.anchor + self.offset * torch.exp(self.offset_scale)
+        
+        self.set_optimizable_parameters()
+        self.setup_optimizer()
+        self.validate_fields()
+
+    @torch.no_grad()
+    def init_from_ply(self, mogt_path: str, init_model=True):
+        plydata = PlyData.read(mogt_path)
+        v = plydata.elements[0]
+
+        for line in plydata.obj_info:
+            key, value = line.split()
+            if (key == "standard_dist"):
+                self.std_dist = float(value)
+                break
+
+        # 1. anchor, offset
+        mogt_anchor = np.stack((np.asarray(v["x"]),
+                        np.asarray(v["y"]),
+                        np.asarray(v["z"])),  axis=1)
+        num_gaussians = mogt_anchor.shape[0]
+        
+        mogt_offset = np.zeros((num_gaussians, 3))
+        mogt_offset[:, 0] = np.asarray(v["f_offset_0"])
+        mogt_offset[:, 1] = np.asarray(v["f_offset_1"])
+        mogt_offset[:, 2] = np.asarray(v["f_offset_2"])
+
+        # 2. density
+        mogt_densities = np.asarray(v['opacity'])[..., np.newaxis]
+
+        # 3. albedo
+        mogt_albedo = np.zeros((num_gaussians, 3))
+        mogt_albedo[:,0] = np.asarray(v['f_dc_0'])
+        mogt_albedo[:,1] = np.asarray(v['f_dc_1'])
+        mogt_albedo[:,2] = np.asarray(v['f_dc_2'])
+
+        # 4. specular
+        extra = sorted([p.name for p in v.properties if p.name.startswith("f_rest_")],
+                    key=lambda x: int(x.split('_')[-1]))
+        num_spec = (self.max_n_features+1)**2 - 1
+        mogt_spec = np.zeros((num_gaussians, len(extra)))
+        for i, name in enumerate(extra):
+            mogt_spec[:,i] = np.asarray(v[name])
+        mogt_spec = mogt_spec.reshape((num_gaussians, 3, num_spec)).transpose(0,2,1).reshape((num_gaussians, num_spec*3))
+
+        # 5. scale: exp(scale_0~5)
+        scale_names = [p.name for p in v.properties if p.name.startswith("scale_")]
+        scale_names = sorted(scale_names, key = lambda x: int(x.split('_')[-1]))
+        mogt_scales = np.zeros((num_gaussians, len(scale_names)))
+        for idx, attr_name in enumerate(scale_names):
+            mogt_scales[:, idx] = np.asarray(v[attr_name])
+
+        # 6. rotation
+        rot_names = [p.name for p in v.properties if p.name.startswith("rot")]
+        rot_names = sorted(rot_names, key = lambda x: int(x.split('_')[-1]))
+        mogt_rotation = np.zeros((num_gaussians, len(rot_names)))
+        for idx, attr_name in enumerate(rot_names):
+            mogt_rotation[:, idx] = np.asarray(v[attr_name])
+
+
+        # 7. level
+        mogt_level = np.asarray(v['level'])[..., np.newaxis]
+        mogt_extra_level = np.asarray(v['extra_level'])[..., np.newaxis]
+
+        t = torch.tensor
+        dev = self.device
+        self.anchor           = torch.nn.Parameter(t(mogt_anchor,    dtype=self.anchor.dtype, device=dev))
+        self.offset           = torch.nn.Parameter(t(mogt_offset,    dtype=self.positions.dtype, device=dev))
+        self.offset_scale     = torch.nn.Parameter(t(mogt_scales[:, :3],    dtype=self.positions.dtype, device=dev))
+        self.density          = torch.nn.Parameter(t(mogt_densities, dtype=self.density.dtype, device=dev))
+        self.features_albedo  = torch.nn.Parameter(t(mogt_albedo, dtype=self.features_albedo.dtype, device=dev))
+        self.features_specular= torch.nn.Parameter(t(mogt_spec,   dtype=self.features_specular.dtype, device=dev))
+        self.scale            = torch.nn.Parameter(t(mogt_scales[:, 3:], dtype=self.scale.dtype, device=dev))
+        self.rotation         = torch.nn.Parameter(t(mogt_rotation,dtype=self.rotation.dtype, device=dev))
+        self.level            = torch.nn.Parameter(t(mogt_level, dtype=self.levels.dtype, device=dev), requires_grad=False)
+        self.extra_level      = torch.nn.Parameter(t(mogt_extra_level, dtype=self.extra_levels.dtype, device=dev), requires_grad=False)
+        self.anchor_mask      = torch.ones(self.num_gaussians, dtype=torch.bool, device="cuda")
+        self.positions        = t(mogt_anchor + mogt_offset * np.exp(mogt_scales[:, :3]))
+        self.n_active_features = self.max_n_features
+
+        if init_model:
+            self.set_optimizable_parameters()
+            self.setup_optimizer()
+            self.validate_fields()
