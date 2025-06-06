@@ -175,10 +175,7 @@ class MixtureOfGaussians(torch.nn.Module):
 
         # Rendering method
         if conf.render.method == "3dgrt":
-            if conf.lod:
-                self.renderer = threedgrt_tracer.LoDTracer(conf)
-            else:
-                self.renderer = threedgrt_tracer.Tracer(conf)
+            self.renderer = threedgrt_tracer.Tracer(conf)
         elif conf.render.method == "3dgut":
             self.renderer = threedgut_tracer.Tracer(conf)
         else:

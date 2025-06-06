@@ -196,7 +196,8 @@ std::vector<std::string> OptixTracer::generateDefines(
     bool particleKernelDensityClamping,
     int particleRadianceSphDegree,
     bool enableNormals,
-    bool enableHitCounts) {
+    bool enableHitCounts,
+    bool enableLoD) {
     std::vector<std::string> defines;
     if (_state) {
         defines.emplace_back("-DPARTICLE_KERNEL_DEGREE=" + std::to_string(static_cast<int32_t>(particleKernelDegree)));
@@ -205,6 +206,9 @@ std::vector<std::string> OptixTracer::generateDefines(
         }
         if (enableHitCounts) {
             defines.emplace_back("-DENABLE_HIT_COUNTS");
+        }
+        if (enableLoD) {
+            defines.emplace_back("-DENABLE_LOD");
         }
         defines.emplace_back("-DSPH_MAX_NUM_COEFFS=" + std::to_string((_state->particleRadianceSphDegree + 1) * (_state->particleRadianceSphDegree + 1)));
         defines.emplace_back("-DPARTICLE_PRIMITIVE_TYPE=" + std::to_string(_state->gPrimType));
@@ -224,8 +228,8 @@ OptixTracer::OptixTracer(
     bool particleKernelDensityClamping,
     int particleRadianceSphDegree,
     bool enableNormals,
-    bool enableHitCounts) {
-
+    bool enableHitCounts,
+    bool enableLoD) {
     _state = new State();
     memset(_state, 0, sizeof(State));
 
@@ -259,8 +263,9 @@ OptixTracer::OptixTracer(
     _state->gPrimNumVert                  = 0;
     _state->gPrimNumTri                   = 0;
 
-    std::vector<std::string> defines = generateDefines(particleKernelDegree, particleKernelDensityClamping,
-                                                       particleRadianceSphDegree, enableNormals, enableHitCounts);
+    std::vector<std::string>
+        defines = generateDefines(particleKernelDegree, particleKernelDensityClamping,
+                                  particleRadianceSphDegree, enableNormals, enableHitCounts, enableLoD);
 
     const uint32_t sharedFlags =
         (_state->gPrimType == MOGTracingSphere ? PipelineFlag_SpherePrim : ((_state->gPrimType == MOGTracingCustom) || (_state->gPrimType == MOGTracingInstances) ? PipelineFlag_HasIS : 0));

@@ -26,7 +26,19 @@
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     pybind11::class_<OptixTracer>(m, "OptixTracer")
-        .def(pybind11::init<const std::string&, const std::string&, const std::string&, const std::string&, const std::string&, float, float, bool, int, bool, bool>())
+        .def(pybind11::init<const std::string&, const std::string&, const std::string&, const std::string&, const std::string&, float, float, bool, int, bool, bool, bool>(),
+             pybind11::arg("path"),
+             pybind11::arg("cuda_path"),
+             pybind11::arg("pipeline"),
+             pybind11::arg("backwardPipeline"),
+             pybind11::arg("primitive"),
+             pybind11::arg("particleKernelDegree"),
+             pybind11::arg("particleKernelMinResponse"),
+             pybind11::arg("particleKernelDensityClamping"),
+             pybind11::arg("particleRadianceSphDegree"),
+             pybind11::arg("enableNormals"),
+             pybind11::arg("enableHitCounts"),
+             pybind11::arg("enableLoD") = false)
         .def("trace", &OptixTracer::trace)
         .def("trace_bwd", &OptixTracer::traceBwd)
         .def("build_bvh", &OptixTracer::buildBVH);

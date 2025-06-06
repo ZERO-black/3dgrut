@@ -5,6 +5,7 @@ from torch_scatter import scatter_max
 import numpy as np
 from plyfile import PlyData, PlyElement
 
+import threedgrt_tracer
 from threedgrut.datasets.utils import read_next_bytes, read_colmap_points3D_text
 from threedgrut.model.model import MixtureOfGaussians 
 from threedgrut.utils.logger import logger
@@ -66,6 +67,7 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
             raise ValueError(f"Unsupported type with lod!")
         
         super().__init__(conf, scene_extent)
+        self.renderer = threedgrt_tracer.LoDTracer(conf)
         if "positions" in self._parameters:
             del self._parameters["positions"]
 
