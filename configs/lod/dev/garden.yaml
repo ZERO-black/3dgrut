@@ -16,7 +16,7 @@ n_iterations: 30000
 export_ingp:
   enabled: false
 
-with_gui: False
+with_gui: True
 path: data/mipnerf360/garden
 out_dir: results/lod/dev/0606/ckpt
 experiment_name: density-0606
