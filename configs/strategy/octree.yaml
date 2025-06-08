@@ -5,7 +5,7 @@ print_stats: true
 densify:
   params: positions # one of [positions, positions_gradient_norm, features_albedo]
   frequency: 100 # densification_interval in 3DGS with default value 100 / 3dgrt 300
-  start_iteration: 500 # densify_from_iter in 3DGS default value 500
+  start_iteration: 0 # densify_from_iter in 3DGS default value 500
   end_iteration: 20000 # densify_until_iter in 3DGS default value 15_000
   # clone_grad_threshold: 0.0002 # Called densify_grad_threshold in 3DGS with default value 0.0002
   # split_grad_threshold: 0.0002 # Called densify_grad_threshold in 3DGS with default value 0.0002

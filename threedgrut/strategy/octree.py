@@ -124,12 +124,12 @@ class OctreeStrategy(GSStrategy):
 
         total = self.anchor_mask.numel()
         valid = self.anchor_mask.sum().item()
-        print(f"valid offsets: {valid}/{total} ({valid/total*100:.2f}%)")
+        logger.info(f"valid offsets: {valid}/{total} ({valid/total*100:.2f}%)")
         g = anchor_grads
-        print("mean:", g.mean().item())
-        print("std:", g.std().item())
-        print("min, max:", g.min().item(), g.max().item())
-        print("median:", g.median().item())
+        logger.info(f"mean: {g.mean().item()}")
+        logger.info(f"std: {g.std().item()}")
+        logger.info(f"min: {g.min().item()}, max: {g.max().item()}")
+        logger.info(f"median: {g.median().item()}")
 
         # 1) prune된 앵커들은 gradient 0으로
         anchor_grads = anchor_grads.clone()
@@ -242,7 +242,7 @@ class OctreeStrategy(GSStrategy):
                     device="cuda"
                 ) * cur_level  # [U1']
 
-                candidate_anchor, new_level, _, weed_mask = self.weed_out(
+                candidate_anchor, new_level, _, weed_mask = self.model.weed_out(
                     candidate_anchor, new_level
                 )
                 remove_dup_clone = remove_dup.clone()
@@ -274,9 +274,16 @@ class OctreeStrategy(GSStrategy):
             selected_grid_coords_ds = torch.round(
                 (cand_down_coords - self.model.init_pos) / ds_size - self.model.padding
             ).int()  # [M2,3]
+            logger.info(
+                f"cur_level={cur_level}  ds raw candidates: {cand_down_coords.shape[0]}"
+            )
+
             selected_grid_coords_unique_ds, inverse_indices_ds = torch.unique(
                 selected_grid_coords_ds, return_inverse=True, dim=0
             )  # [U2,3], [M2]
+            logger.info(
+                f"cur_level={cur_level}  unique ds coords: {selected_grid_coords_unique_ds.shape[0]}"
+            )
 
             unique_mask = torch.zeros(
                 selected_grid_coords_ds.shape[0], dtype=torch.bool
@@ -303,15 +310,23 @@ class OctreeStrategy(GSStrategy):
                         dtype=torch.int, device="cuda"
                     ) * (cur_level + 1)  # [U2]
 
-                    candidate_anchor_ds, new_level_ds, _, weed_ds_mask = self.model.weed_out(
-                        candidate_anchor_ds, new_level_ds
+                    # candidate_anchor_ds, new_level_ds, mean_vis, weed_ds_mask = (
+                    #     self.model.weed_out(candidate_anchor_ds, new_level_ds)
+                    # )
+                    weed_ds_mask = torch.ones(
+                        candidate_anchor_ds.shape[0], dtype=torch.bool, device="cuda"
                     )
+                    # logger.info(
+                    #     f"cur_level={cur_level} ds before weed_out: {candidate_anchor_ds.shape[0]} → after: {weed_ds_mask.sum().item()}, mean_visible={mean_vis.item():.3f}"
+                    # )
                     remove_dup_ds_clone = remove_dup_ds.clone()
                     remove_dup_ds[remove_dup_ds_clone] = weed_ds_mask
                     selected_features_unique_ds = selected_features_unique_ds[
                         weed_ds_mask
                     ]
-
+                    # logger.info(
+                    #     f"cur_level={cur_level}  ds survived after model.weed_out: {weed_ds_mask.sum().item()}"
+                    # )
                 elif (selected_grid_coords_unique_ds.shape[0] > 0 and
                     grid_coords_ds.shape[0] > 0):
                     remove_dup_ds_init = self.model.get_remove_duplicates(
@@ -328,15 +343,20 @@ class OctreeStrategy(GSStrategy):
                         dtype=torch.int, device="cuda"
                     ) * (cur_level + 1)  # [U2']
 
-                    candidate_anchor_ds, new_level_ds, _, weed_ds_mask = self.model.weed_out(
-                        candidate_anchor_ds, new_level_ds
+                    # candidate_anchor_ds, new_level_ds, _, weed_ds_mask = self.model.weed_out(
+                    #     candidate_anchor_ds, new_level_ds
+                    # )
+                    weed_ds_mask = torch.ones(
+                        candidate_anchor_ds.shape[0], dtype=torch.bool, device="cuda"
                     )
                     remove_dup_ds_clone = remove_dup_ds.clone()
                     remove_dup_ds[remove_dup_ds_clone] = weed_ds_mask
                     selected_features_unique_ds = selected_features_unique_ds[
                         weed_ds_mask
                     ]
-
+                    # logger.info(
+                    #     f"cur_level={cur_level}  ds survived after model.weed_out: {weed_ds_mask.sum().item()}"
+                    # )
                 else:
                     candidate_anchor_ds = torch.zeros(
                         (0, 3), dtype=torch.float, device="cuda"
@@ -351,6 +371,7 @@ class OctreeStrategy(GSStrategy):
                     selected_features_unique_ds = torch.zeros(
                         (0, 3), dtype=torch.float, device="cuda"
                     )
+                    logger.info(f"cur_level={cur_level}  ds branch skipped")
             else:
                 candidate_anchor_ds = torch.zeros(
                     (0, 3), dtype=torch.float, device="cuda"
@@ -375,6 +396,9 @@ class OctreeStrategy(GSStrategy):
             new_anchor = torch.cat([candidate_anchor, candidate_anchor_ds], dim=0)  # [M_new,3]
             new_level  = torch.cat([new_level, new_level_ds], dim=0).unsqueeze(1).float().cuda()  # [M_new,1]
             M_new = new_anchor.shape[0]
+            logger.info(
+                f"cur_level={cur_level}, same={candidate_anchor.shape[0]} down={candidate_anchor_ds.shape[0]}"
+            )
 
             # --------------------------------------------------------
             # 14) 새 SH feature (k=1)이므로 간단히 Boolean 인덱싱
