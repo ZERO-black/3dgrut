@@ -11,7 +11,7 @@ defaults:
 # overwrite of default parameters
 val_frequency: 999999 # never validate
 lod: True
-n_iterations: 7000
+n_iterations: 30000
 
 export_ingp:
   enabled: false
@@ -19,7 +19,7 @@ export_ingp:
 with_gui: True
 path: data/mipnerf360/garden
 out_dir: results/lod/dev/0608/ckpt
-experiment_name: renderer-test
+experiment_name: ver1.0
 
 dataset:
   downsample_factor: 4

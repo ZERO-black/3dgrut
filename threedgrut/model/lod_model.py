@@ -24,13 +24,16 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         return self.density.shape[0]
 
     def get_positions(self) -> torch.Tensor:
-        return self.anchor + self.offset * self.get_offset_scale()
+        return self.get_anchor() + self.get_offset() * self.get_offset_scale()
 
     def get_anchor(self) -> torch.Tensor:
         return self.anchor
 
-    def get_offset(self) -> torch.Tensor:
-        return self.offset
+    def get_offset(self, preactivation=False) -> torch.Tensor:
+        if preactivation:
+            return self.offset
+        else:
+            return self.scale_activation(self.offset)
 
     def get_offset_scale(self, preactivation=False) -> torch.Tensor:
         if preactivation:
@@ -59,13 +62,6 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         params = super().get_model_parameters()
         del params["positions"]
 
-        self.anchor = torch.nn.Parameter(torch.empty([0, 3]))
-        self.offset = torch.nn.Parameter(torch.empty([0, 3]))
-        self.offset_scale = torch.nn.Parameter(torch.empty([0, 3]))
-        self.levels = torch.nn.Parameter(torch.empty([0, 1]), requires_grad=False)
-        self.extra_levels = torch.nn.Parameter(torch.empty([0, 1]), requires_grad=False)
-        self.std_dist = 0
-
         params["anchor"] = self.anchor
         params["offset"] = self.offset
         params["offset_scale"] = self.offset_scale
@@ -84,6 +80,13 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         if "positions" in self._parameters:
             del self._parameters["positions"]
 
+        self.anchor = torch.nn.Parameter(torch.empty([0, 3]))
+        self.offset = torch.nn.Parameter(torch.empty([0, 3]))
+        self.offset_scale = torch.nn.Parameter(torch.empty([0, 3]))
+        self.levels = torch.nn.Parameter(torch.empty([0, 1]), requires_grad=False)
+        self.extra_levels = torch.nn.Parameter(torch.empty([0, 1]), requires_grad=False)
+        self.std_dist = 0
+
     def init_from_checkpoint(self, checkpoint: dict, setup_optimizer=True):
         self.anchor = checkpoint["anchor"]
         self.offset = checkpoint["offset"]
@@ -98,6 +101,7 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         self.scene_extent = checkpoint["scene_extent"]
         self.level = checkpoint["level"]
         self.extra_level = checkpoint["extra_level"]
+        self.std_dist = checkpoint["std_dist"]
 
         if self.progressive_training:
             self.feature_dim_increase_interval = checkpoint[

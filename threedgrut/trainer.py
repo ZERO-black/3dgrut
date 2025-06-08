@@ -655,7 +655,8 @@ class Trainer3DGRUT:
 
             self.teardown_dataloaders()
             self.save_checkpoint(last_checkpoint=True)
-
+            t = self.model.get_positions()
+            print(f"shape={tuple(t.shape)}, device={t.device}, dtype={t.dtype}")
             # Renderer test split
             renderer = Renderer.from_preloaded_model(
                 model=self.model,
