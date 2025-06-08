@@ -104,11 +104,7 @@ scheduler:
   #   lr_init: ${optimizer.params.positions.lr}
   #   lr_final: 0.0000016
     # max_steps: 30000
-  anchor:
-    type: exp
-    lr_init: ${optimizer.params.anchor.lr}
-    lr_final: 0.0
-    max_steps: 40000
+
   offset:
     lr_init: ${optimizer.params.offset.lr}
     lr_final: 0.0001
