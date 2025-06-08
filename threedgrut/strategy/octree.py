@@ -6,7 +6,7 @@ from threedgrut.model.lod_model import MixtureOfGaussiansWithAnchor
 from threedgrut.strategy.gs import GSStrategy
 from threedgrut.utils.logger import logger
 from threedgrut.utils.misc import quaternion_to_so3, check_step_condition
-
+import math
 
 class OctreeStrategy(GSStrategy):
     def __init__(self, config, model: MixtureOfGaussiansWithAnchor) -> None:
@@ -155,12 +155,16 @@ class OctreeStrategy(GSStrategy):
             extra_threshold = base * self.extra_ratio
 
             scales = self.model.get_scale()  # shape: (N, 3)
-            large_scale_mask = (scales > 2 * cur_size).any(dim=1)
+            large_scale_mask = (scales > 2 * cur_size).any(dim=1) & level_mask
+
+            with torch.no_grad():
+                # ln(2)를 빼서 exp(raw_scale - ln(2)) = exp(raw_scale)/2
+                self.model.scale.data[large_scale_mask] -= math.log(2)
 
             # 5) 같은 레벨 분할 후보
             candidate_same_level = (
                 (anchor_grads >= base) & (anchor_grads < next_threshold) & level_mask
-            ) | (level_mask & large_scale_mask)
+            ) | large_scale_mask
 
             # 6) 하위 레벨 분할 후보
             candidate_down_level = torch.zeros_like(candidate_same_level)

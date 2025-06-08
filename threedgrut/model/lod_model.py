@@ -376,7 +376,9 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         logger.info(f"Generating random point cloud ({num_gaussians})...")
 
         fused_point_cloud = (
-            torch.rand((num_gaussians, 3), dtype=dtype, device=self.device) * 3 - 1.5
+            torch.rand((num_gaussians, 3), dtype=dtype, device=self.device)
+            * (xyz_max - xyz_min)
+            + xyz_min
         )
 
         # sh albedo in [0, 0.0039]
