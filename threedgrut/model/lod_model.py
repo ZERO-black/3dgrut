@@ -83,10 +83,10 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         self.levels = torch.nn.Parameter(torch.empty([0, 1]), requires_grad=False)
         self.extra_levels = torch.nn.Parameter(torch.empty([0, 1]), requires_grad=False)
         self.std_dist = 0
-        self.spatial_rate = 0
+        self.scene_extent = 0
 
     def set_spatial_rate(self, value):
-        self.spatial_rate = value
+        self.scene_extent = value
 
     def setup_scheduler(self):
         self.schedulers = {}
