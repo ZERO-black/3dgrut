@@ -42,7 +42,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
                                                                                                                                           int sphDegree,
                                                                                                                                           float minTransmittance, float std_dist) {
 
-    const torch::TensorOptions opts  = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
+                                                                                                                                            const torch::TensorOptions opts  = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
     torch::Tensor rayRad             = torch::empty({rayOri.size(0), rayOri.size(1), rayOri.size(2), 3}, opts);
     torch::Tensor rayDns             = torch::empty({rayOri.size(0), rayOri.size(1), rayOri.size(2), 1}, opts);
     torch::Tensor rayHit             = torch::empty({rayOri.size(0), rayOri.size(1), rayOri.size(2), 2}, opts);

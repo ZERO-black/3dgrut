@@ -86,8 +86,11 @@ class Renderer:
         writer, out_dir, run_name = create_summary_writer(conf, object_name, out_dir, experiment_name, use_wandb=False)
 
         if model is None:
-            # Initialize the model and the optix context
-            model = MixtureOfGaussians(conf)
+            if conf.get("lod", False):
+                ModelClass = MixtureOfGaussiansWithAnchor
+            else:
+                ModelClass = MixtureOfGaussians
+            model = ModelClass(conf)
             # Initialize the parameters from checkpoint
             model.init_from_checkpoint(checkpoint)
         model.build_acc()
@@ -132,7 +135,7 @@ class Renderer:
             with initialize(version_base=None, config_path='../configs'):
                 conf = compose(config_name=config_path)
             return conf
-        
+
         global_step = 0
 
         conf = load_default_config()

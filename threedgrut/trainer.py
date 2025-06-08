@@ -244,11 +244,23 @@ class Trainer3DGRUT:
             logger.info(f"🤸 Initiating new 3dgrut training..")
             match conf.initialization.method:
                 case "random":
-                    model.init_from_random_point_cloud(
-                        num_gaussians=conf.initialization.num_gaussians,
-                        xyz_max=conf.initialization.xyz_max,
-                        xyz_min=conf.initialization.xyz_min,
-                    )
+                    if isinstance(model, MixtureOfGaussiansWithAnchor):
+                        model.init_from_random_point_cloud(
+                            num_gaussians=conf.initialization.num_gaussians,
+                            observer_pts=torch.tensor(
+                                train_dataset.get_observer_points(),
+                                dtype=torch.float32,
+                                device=self.device,
+                            ),
+                            xyz_min=train_dataset.get_scene_bbox()[0].cuda(),
+                            xyz_max=train_dataset.get_scene_bbox()[1].cuda(),
+                        )
+                    else:
+                        model.init_from_random_point_cloud(
+                            num_gaussians=conf.initialization.num_gaussians,
+                            xyz_max=conf.initialization.xyz_max,
+                            xyz_min=conf.initialization.xyz_min,
+                        )
                 case "colmap":
                     observer_points = torch.tensor(
                         train_dataset.get_observer_points(), dtype=torch.float32, device=self.device
@@ -264,6 +276,18 @@ class Trainer3DGRUT:
                 case "checkpoint":
                     checkpoint = torch.load(conf.initialization.path)
                     model.init_from_checkpoint(checkpoint, setup_optimizer=False)
+                case "initial_point_cloud":
+                    try:
+                        ply_path = os.path.join(conf.path, "point_cloud.ply")
+                        observer_points = torch.tensor(
+                            train_dataset.get_observer_points(),
+                            dtype=torch.float32,
+                            device=self.device,
+                        )
+                        model.init_from_initial_point_cloud(ply_path, observer_points)
+                    except FileNotFoundError as e:
+                        logger.error(e)
+                        raise e
                 case _:
                     raise ValueError(
                         f"unrecognized initialization.method {conf.initialization.method}, choose from [colmap, point_cloud, random, checkpoint]"

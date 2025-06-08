@@ -122,6 +122,15 @@ class OctreeStrategy(GSStrategy):
                     iteration: int,
                     anchor_grads: torch.Tensor):
 
+        total = self.anchor_mask.numel()
+        valid = self.anchor_mask.sum().item()
+        print(f"valid offsets: {valid}/{total} ({valid/total*100:.2f}%)")
+        g = anchor_grads
+        print("mean:", g.mean().item())
+        print("std:", g.std().item())
+        print("min, max:", g.min().item(), g.max().item())
+        print("median:", g.median().item())
+
         # 1) prune된 앵커들은 gradient 0으로
         anchor_grads = anchor_grads.clone()
         anchor_grads[~self.anchor_mask] = 0.0
@@ -131,6 +140,8 @@ class OctreeStrategy(GSStrategy):
             # 2) 현재 레벨 앵커
             level_mask = (self.model.get_levels().squeeze(1) == cur_level)
             if not level_mask.any():
+                if self.conf.strategy.print_stats:
+                    logger.info(f"[Level: {cur_level}] 0 gaussians")
                 continue
 
             # 3) voxel 크기
@@ -138,7 +149,7 @@ class OctreeStrategy(GSStrategy):
             ds_size = cur_size / self.fork
 
             # 4) 레벨별 threshold
-            update_value    = self.fork ** self.update_ratio
+            update_value = self.fork**self.update_ratio
             base            = self.densify_threshold * (update_value ** cur_level)
             next_threshold  = base * update_value
             extra_threshold = base * self.extra_ratio
@@ -157,6 +168,9 @@ class OctreeStrategy(GSStrategy):
                     (anchor_grads >= next_threshold) &
                     level_mask
                 )
+            logger.info(
+                f"[Level: {cur_level}] curr: {torch.sum(level_mask)} same: {torch.sum(candidate_same_level)} down: {torch.sum(candidate_down_level)}"
+            )
 
             # 7) extra_level 업데이트
             if (not self.progressive) or (iteration > self.coarse_intervals[-1]):
@@ -378,9 +392,18 @@ class OctreeStrategy(GSStrategy):
 
             # --------------------------------------------------------
             # 16) 새 Scale 초기화 (3차원)
+            # new_scale = self.model.scale_activation_inv(
+            #     cur_size * torch.ones((M_new, 3), device="cuda")
+            # )  # [M_new,3]
             new_scale = self.model.scale_activation_inv(
-                cur_size * torch.ones((M_new, 3), device="cuda")
-            )  # [M_new,3]
+                torch.cat(
+                    [
+                        cur_size * torch.ones_like(candidate_anchor, device="cuda"),
+                        ds_size * torch.ones_like(candidate_anchor_ds, device="cuda"),
+                    ],
+                    dim=0,
+                )
+            )
 
             # --------------------------------------------------------
             # 17) 새 Rotation 초기화 (identity quaternion)
@@ -390,7 +413,7 @@ class OctreeStrategy(GSStrategy):
             # --------------------------------------------------------
             # 18) 새 Offset 초기화 (k=1이므로 [0,0,0])
             new_offset = torch.zeros((M_new, 3), device="cuda")  # [M_new,3]
-            new_offset_scale = self.model.scale_activation_inv(torch.ones((M_new, 3), device="cuda"))  # [M_new,3]
+            new_offset_scale = new_scale.clone()  # [M_new,3]
 
             # --------------------------------------------------------
             # 19) 새 extra_level 초기화
@@ -468,7 +491,7 @@ class OctreeStrategy(GSStrategy):
                 n_before = init_shape
                 n_after = self.model.num_gaussians
                 logger.info(
-                    f"[Level:{cur_level}] Anchor growed {n_before} -> {n_after} ({n_after/n_before*100:.2f}%) gaussians"
+                    f"[Level: {cur_level}] Anchor growed {n_before} -> {n_after} ({n_after/n_before*100:.2f}%) gaussians"
                 )
         self.reset_densification_buffers()
         if self.conf.strategy.print_stats:

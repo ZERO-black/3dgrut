@@ -1,4 +1,3 @@
-
 import os, math
 import torch
 from torch_scatter import scatter_max
@@ -23,34 +22,34 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
     @property
     def num_gaussians(self):
         return self.density.shape[0]
-    
+
     def get_positions(self) -> torch.Tensor:
         return self.anchor + self.offset * self.get_offset_scale()
-    
+
     def get_anchor(self) -> torch.Tensor:
         return self.anchor
-    
+
     def get_offset(self) -> torch.Tensor:
         return self.offset
-    
+
     def get_offset_scale(self, preactivation=False) -> torch.Tensor:
         if preactivation:
             return self.offset_scale
         else:
             return self.scale_activation(self.offset_scale)
-    
+
     def get_levels(self) -> torch.Tensor:
         return self.level
 
     def get_extra_levels(self) -> torch.Tensor:
         return self.extra_level
-    
+
     def get_num_gaussians(self) -> int:
         return len(self.density)
-    
+
     def get_anchor_masks(self)-> torch.Tensor:
         return self.anchor_mask
-    
+
     def map_to_int_level(self, pred_level, cur_level):
         int_level = torch.round(pred_level).int()
         int_level = torch.clamp(int_level, min=0, max=cur_level)
@@ -59,17 +58,58 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
     def get_model_parameters(self) -> dict:
         params = super().get_model_parameters()
         del params["positions"]
+
+        self.anchor = torch.nn.Parameter(torch.empty([0, 3]))
+        self.offset = torch.nn.Parameter(torch.empty([0, 3]))
+        self.offset_scale = torch.nn.Parameter(torch.empty([0, 3]))
+        self.levels = torch.nn.Parameter(torch.empty([0, 1]), requires_grad=False)
+        self.extra_levels = torch.nn.Parameter(torch.empty([0, 1]), requires_grad=False)
+        self.std_dist = 0
+
+        params["anchor"] = self.anchor
+        params["offset"] = self.offset
+        params["offset_scale"] = self.offset_scale
+        params["level"] = self.level
+        params["extra_level"] = self.extra_level
+        params["std_dist"] = self.std_dist
         return params
 
     def __init__(self, conf, scene_extent=None):
         # Rendering method
         if conf.render.method == "3dgut":
             raise ValueError(f"Unsupported type with lod!")
-        
+
         super().__init__(conf, scene_extent)
         self.renderer = threedgrt_tracer.LoDTracer(conf)
         if "positions" in self._parameters:
             del self._parameters["positions"]
+
+    def init_from_checkpoint(self, checkpoint: dict, setup_optimizer=True):
+        self.anchor = checkpoint["anchor"]
+        self.offset = checkpoint["offset"]
+        self.offset_scale = checkpoint["offset_scale"]
+        self.rotation = checkpoint["rotation"]
+        self.scale = checkpoint["scale"]
+        self.density = checkpoint["density"]
+        self.features_albedo = checkpoint["features_albedo"]
+        self.features_specular = checkpoint["features_specular"]
+        self.n_active_features = checkpoint["n_active_features"]
+        self.max_n_features = checkpoint["max_n_features"]
+        self.scene_extent = checkpoint["scene_extent"]
+        self.level = checkpoint["level"]
+        self.extra_level = checkpoint["extra_level"]
+
+        if self.progressive_training:
+            self.feature_dim_increase_interval = checkpoint[
+                "feature_dim_increase_interval"
+            ]
+            self.feature_dim_increase_step = checkpoint["feature_dim_increase_step"]
+
+        self.background.load_state_dict(checkpoint["background"])
+        if setup_optimizer:
+            self.set_optimizable_parameters()
+            self.setup_optimizer(state_dict=checkpoint["optimizer"])
+        self.validate_fields()
 
     def validate_fields(self):
         num_gaussians = self.num_gaussians
@@ -100,7 +140,7 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
             new_dist = torch.tensor([dist_min, dist_max]).float().cuda()
             new_dist = new_dist
             all_dist = torch.cat((all_dist, new_dist), dim=0)
-        
+
         dist_max = torch.quantile(all_dist, self.dist_ratio)
         dist_min = torch.quantile(all_dist, 1 - self.dist_ratio)
         self.std_dist = float(dist_max)
@@ -127,7 +167,7 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
             self.colors = torch.concat((self.colors, new_colors), dim=0)
             self.level = torch.concat((self.level, new_levels), dim=0)
         torch.cuda.synchronize()
-    
+
     def weed_out(self, gaussian_positions, gaussian_levels):
         visible_count = torch.zeros(gaussian_positions.shape[0], dtype=torch.int, device="cuda")
         for cam in self.cam_infos:
@@ -140,7 +180,7 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         weed_mask = (visible_count > self.visible_threshold)
         mean_visible = torch.mean(visible_count)
         return gaussian_positions[weed_mask], gaussian_levels[weed_mask], mean_visible, weed_mask
-    
+
     def default_initialize_from_points(self, pts, observer_pts, colors=None, use_observer_pts=True):
         # hyper parameter
         self.max_level = -1
@@ -153,15 +193,15 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         self.visible_threshold = 0.9
         self.dist_ratio = 0.999
         self.n_offsets = 1
-
+        logger.info(f"Generating Octree...")
         self.set_level(pts, observer_pts)
         # unknown
         # self.spatial_lr_scale = spatial_lr_scale
-        
+
         box_min = torch.min(pts)*self.extend
         box_max = torch.max(pts)*self.extend
         box_d = box_max - box_min
-        print(box_d)
+
         if self.base_layer < 0:
             self.base_layer = torch.round(torch.log2(box_d/self.default_voxel_size)).int().item()-(self.max_level//2)+1
 
@@ -193,9 +233,14 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
 
         dist2 = (knn(fused_point_cloud, 4)[:, 1:] ** 2).mean(dim=-1)  # [N,]
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 6)
-        rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
+        rots = torch.rand((fused_point_cloud.shape[0], 4), device=self.device)
         rots[:, 0] = 1
-        opacities = self.density_activation_inv(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
+        opacities = self.density_activation_inv(
+            self.conf.model.default_density
+            * torch.ones(
+                (fused_point_cloud.shape[0], 1), dtype=torch.float, device=self.device
+            )
+        )
 
         self.anchor = torch.nn.Parameter(fused_point_cloud)
         self.offset =  torch.nn.Parameter(offsets)
@@ -206,11 +251,15 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         self.rotation = torch.nn.Parameter(rots)
         self.density = torch.nn.Parameter(opacities)
         self.level = self.level.unsqueeze(dim=1).float()
-        self.extra_level = torch.zeros(self.num_gaussians, dtype=torch.float, device="cuda")
-        self.anchor_mask = torch.ones(self.num_gaussians, dtype=torch.bool, device="cuda")
-        
+        self.extra_level = torch.zeros(
+            self.num_gaussians, dtype=torch.float, device=self.device
+        )
+        self.anchor_mask = torch.ones(
+            self.num_gaussians, dtype=torch.bool, device=self.device
+        )
+
         self.positions = self.anchor + self.offset * torch.exp(self.offset_scale)
-        
+
         self.set_optimizable_parameters()
         self.setup_optimizer()
         self.validate_fields()
@@ -231,7 +280,7 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
                         np.asarray(v["y"]),
                         np.asarray(v["z"])),  axis=1)
         num_gaussians = mogt_anchor.shape[0]
-        
+
         mogt_offset = np.zeros((num_gaussians, 3))
         mogt_offset[:, 0] = np.asarray(v["f_offset_0"])
         mogt_offset[:, 1] = np.asarray(v["f_offset_1"])
@@ -269,16 +318,21 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         for idx, attr_name in enumerate(rot_names):
             mogt_rotation[:, idx] = np.asarray(v[attr_name])
 
-
         # 7. level
         mogt_level = np.asarray(v['level'])[..., np.newaxis]
         mogt_extra_level = np.asarray(v['extra_level'])[..., np.newaxis]
 
         t = torch.tensor
         dev = self.device
-        self.anchor           = torch.nn.Parameter(t(mogt_anchor,    dtype=self.anchor.dtype, device=dev))
-        self.offset           = torch.nn.Parameter(t(mogt_offset,    dtype=self.positions.dtype, device=dev))
-        self.offset_scale     = torch.nn.Parameter(t(mogt_scales[:, :3],    dtype=self.positions.dtype, device=dev))
+        self.anchor = torch.nn.Parameter(
+            t(mogt_anchor, dtype=self.anchor.dtype, device=dev)
+        )
+        self.offset = torch.nn.Parameter(
+            t(mogt_offset, dtype=self.anchor.dtype, device=dev)
+        )
+        self.offset_scale = torch.nn.Parameter(
+            t(mogt_scales[:, :3], dtype=self.anchor.dtype, device=dev)
+        )
         self.density          = torch.nn.Parameter(t(mogt_densities, dtype=self.density.dtype, device=dev))
         self.features_albedo  = torch.nn.Parameter(t(mogt_albedo, dtype=self.features_albedo.dtype, device=dev))
         self.features_specular= torch.nn.Parameter(t(mogt_spec,   dtype=self.features_specular.dtype, device=dev))
@@ -294,3 +348,56 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
             self.set_optimizable_parameters()
             self.setup_optimizer()
             self.validate_fields()
+
+    @torch.no_grad()
+    def init_from_random_point_cloud(
+        self,
+        observer_pts,
+        xyz_max: torch.Tensor,
+        xyz_min: torch.Tensor,
+        num_gaussians: int = 100_000,
+        dtype=torch.float32,
+        set_optimizable_parameters: bool = True,
+    ):
+        logger.info(f"Generating random point cloud ({num_gaussians})...")
+
+        fused_point_cloud = (
+            torch.rand((num_gaussians, 3), dtype=dtype, device=self.device)
+            * (xyz_max - xyz_min)
+            + xyz_min
+        )
+
+        fused_color = (
+            torch.randint(
+                low=0,
+                high=30,
+                size=(num_gaussians, 3),
+                dtype=torch.uint8,
+                device=self.device,
+            )
+            / 255.0
+            / 255.0
+        )
+
+        return self.default_initialize_from_points(
+            fused_point_cloud, observer_pts, fused_color
+        )
+
+    def init_from_initial_point_cloud(self, path, observer_pts):
+        plydata = PlyData.read(path)
+        v = plydata.elements[0]
+
+        # 1. anchor, offset
+        fused_point_cloud = torch.tensor(
+            np.stack((v["x"], v["y"], v["z"]), axis=1), device=self.device
+        )
+
+        fused_color = torch.tensor(
+            np.stack((v["red"], v["green"], v["blue"]), axis=1),
+            dtype=torch.uint8,
+            device=self.device,
+        )
+
+        return self.default_initialize_from_points(
+            fused_point_cloud, observer_pts, fused_color
+        )
