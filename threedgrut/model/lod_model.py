@@ -83,6 +83,23 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         self.levels = torch.nn.Parameter(torch.empty([0, 1]), requires_grad=False)
         self.extra_levels = torch.nn.Parameter(torch.empty([0, 1]), requires_grad=False)
         self.std_dist = 0
+        self.spatial_rate = 0
+
+    def set_spatial_rate(self, value):
+        self.spatial_rate = value
+
+    def setup_scheduler(self):
+        self.schedulers = {}
+        for name, args in self.conf.scheduler.items():
+            if args.type is not None and getattr(self, name).requires_grad:
+                if name == "anchor" or name == "offset":
+                    self.schedulers[name] = get_scheduler(args.type)(
+                        lr_init=args.lr_init * self.scene_extent,
+                        lr_final=args.lr_final * self.scene_extent,
+                        max_steps=args.max_steps,
+                    )
+                else:
+                    self.schedulers[name] = get_scheduler(args.type)(**args)
 
     def init_from_checkpoint(self, checkpoint: dict, setup_optimizer=True):
         self.anchor = checkpoint["anchor"]

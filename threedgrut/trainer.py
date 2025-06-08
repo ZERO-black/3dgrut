@@ -178,6 +178,7 @@ class Trainer3DGRUT:
         """Initializes the gaussian model and the optix context"""
         if conf.get("lod", False):
             self.model = MixtureOfGaussiansWithAnchor(conf, scene_extent=scene_extent)
+            self.model.set_spatial_rate(self.scene_extent)
         else:
             self.model = MixtureOfGaussians(conf, scene_extent=scene_extent)
 
