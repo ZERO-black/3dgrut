@@ -29,11 +29,8 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
     def get_anchor(self) -> torch.Tensor:
         return self.anchor
 
-    def get_offset(self, preactivation=False) -> torch.Tensor:
-        if preactivation:
-            return self.offset
-        else:
-            return self.scale_activation(self.offset)
+    def get_offset(self) -> torch.Tensor:
+        return self.offset
 
     def get_offset_scale(self, preactivation=False) -> torch.Tensor:
         if preactivation:
