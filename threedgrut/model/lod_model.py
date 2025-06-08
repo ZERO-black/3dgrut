@@ -15,7 +15,7 @@ from threedgrut.utils.misc import (
     sh_degree_to_specular_dim,
     to_np, to_torch, quaternion_to_so3
 )
-from threedgrut.utils.render import RGB2SH
+from threedgrut.utils.render import RGB2SH, SH2RGB
 from threedgrut.utils.knn import knn
 
 class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
@@ -363,21 +363,18 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         logger.info(f"Generating random point cloud ({num_gaussians})...")
 
         fused_point_cloud = (
-            torch.rand((num_gaussians, 3), dtype=dtype, device=self.device)
-            * (xyz_max - xyz_min)
-            + xyz_min
+            torch.rand((num_gaussians, 3), dtype=dtype, device=self.device) * 3 - 1.5
         )
 
+        # sh albedo in [0, 0.0039]
         fused_color = (
-            torch.randint(
-                low=0,
-                high=30,
-                size=(num_gaussians, 3),
-                dtype=torch.uint8,
-                device=self.device,
+            SH2RGB(
+                (
+                    torch.rand((num_gaussians, 3), dtype=dtype, device=self.device)
+                    / 255.0
+                )
             )
-            / 255.0
-            / 255.0
+            * 255.0
         )
 
         return self.default_initialize_from_points(
@@ -388,16 +385,16 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         plydata = PlyData.read(path)
         v = plydata.elements[0]
 
-        # 1. anchor, offset
         fused_point_cloud = torch.tensor(
             np.stack((v["x"], v["y"], v["z"]), axis=1), device=self.device
         )
 
-        fused_color = torch.tensor(
-            np.stack((v["red"], v["green"], v["blue"]), axis=1),
-            dtype=torch.uint8,
-            device=self.device,
-        )
+        # fused_color = torch.tensor(
+        #     np.stack((v["red"], v["green"], v["blue"]), axis=1),
+        #     dtype=torch.uint8,
+        #     device=self.device,
+        # )
+        fused_color = torch.ones_like(fused_point_cloud, dtype=torch.uint8) * 255
 
         return self.default_initialize_from_points(
             fused_point_cloud, observer_pts, fused_color
