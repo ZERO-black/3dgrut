@@ -154,20 +154,18 @@ class OctreeStrategy(GSStrategy):
             next_threshold  = base * update_value
             extra_threshold = base * self.extra_ratio
 
+            scales = self.model.get_scale()  # shape: (N, 3)
+            large_scale_mask = (scales > 2 * cur_size).any(dim=1)
+
             # 5) 같은 레벨 분할 후보
             candidate_same_level = (
-                (anchor_grads >= base) &
-                (anchor_grads < next_threshold) &
-                level_mask
-            )
+                (anchor_grads >= base) & (anchor_grads < next_threshold) & level_mask
+            ) | (level_mask & large_scale_mask)
 
             # 6) 하위 레벨 분할 후보
             candidate_down_level = torch.zeros_like(candidate_same_level)
             if cur_level < self.model.max_level - 1:
-                candidate_down_level = (
-                    (anchor_grads >= next_threshold) &
-                    level_mask
-                )
+                candidate_down_level = (anchor_grads >= next_threshold) & level_mask
             logger.info(
                 f"[Level: {cur_level}] curr: {torch.sum(level_mask)} same: {torch.sum(candidate_same_level)} down: {torch.sum(candidate_down_level)}"
             )
