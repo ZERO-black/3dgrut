@@ -376,6 +376,7 @@ class Renderer:
             outputs = self.model(gpu_batch)
             pred_rgb = outputs["pred_rgb"].squeeze(0)
             inference_times.append(outputs["frame_time_ms"])
+            logger.info(f"min inference time: {inference_times[-1]}")
 
             # 8) 결과 이미지 저장
             torchvision.utils.save_image(
