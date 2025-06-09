@@ -210,6 +210,9 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
             self.pos = torch.concat((self.pos, new_positions), dim=0)
             self.colors = torch.concat((self.colors, new_colors), dim=0)
             self.level = torch.concat((self.level, new_levels), dim=0)
+            logger.info(
+                f"[Level: {cur_level}] size: {cur_size}, count: {new_positions.shape[0]}"
+            )
         torch.cuda.synchronize()
 
     def weed_out(self, gaussian_positions, gaussian_levels):

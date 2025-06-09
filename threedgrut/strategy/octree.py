@@ -65,43 +65,43 @@ class OctreeStrategy(GSStrategy):
             self.densify_gaussians(step, scene_extent=scene_extent)
             scene_updated = True
 
-        # Prune the Gaussians based on their opacity
-        if check_step_condition(
-            step,
-            self.conf.strategy.prune.start_iteration,
-            self.conf.strategy.prune.end_iteration,
-            self.conf.strategy.prune.frequency,
-        ):
-            self.prune_gaussians_opacity()
-            scene_updated = True
+        # # Prune the Gaussians based on their opacity
+        # if check_step_condition(
+        #     step,
+        #     self.conf.strategy.prune.start_iteration,
+        #     self.conf.strategy.prune.end_iteration,
+        #     self.conf.strategy.prune.frequency,
+        # ):
+        #     self.prune_gaussians_opacity()
+        #     scene_updated = True
 
-        # # Prune the Gaussians based on their scales
-        if check_step_condition(
-            step,
-            self.conf.strategy.prune_scale.start_iteration,
-            self.conf.strategy.prune_scale.end_iteration,
-            self.conf.strategy.prune_scale.frequency,
-        ):
-            self.prune_gaussians_scale(train_dataset)
-            scene_updated = True
+        # # # Prune the Gaussians based on their scales
+        # if check_step_condition(
+        #     step,
+        #     self.conf.strategy.prune_scale.start_iteration,
+        #     self.conf.strategy.prune_scale.end_iteration,
+        #     self.conf.strategy.prune_scale.frequency,
+        # ):
+        #     self.prune_gaussians_scale(train_dataset)
+        #     scene_updated = True
 
-        # Decay the density values
-        if check_step_condition(
-            step,
-            self.conf.strategy.density_decay.start_iteration,
-            self.conf.strategy.density_decay.end_iteration,
-            self.conf.strategy.density_decay.frequency,
-        ):
-            self.decay_density()
+        # # Decay the density values
+        # if check_step_condition(
+        #     step,
+        #     self.conf.strategy.density_decay.start_iteration,
+        #     self.conf.strategy.density_decay.end_iteration,
+        #     self.conf.strategy.density_decay.frequency,
+        # ):
+        #     self.decay_density()
 
-        # Reset the Gaussian density
-        if check_step_condition(
-            step,
-            self.conf.strategy.reset_density.start_iteration,
-            self.conf.strategy.reset_density.end_iteration,
-            self.conf.strategy.reset_density.frequency,
-        ):
-            self.reset_density()
+        # # Reset the Gaussian density
+        # if check_step_condition(
+        #     step,
+        #     self.conf.strategy.reset_density.start_iteration,
+        #     self.conf.strategy.reset_density.end_iteration,
+        #     self.conf.strategy.reset_density.frequency,
+        # ):
+        #     self.reset_density()
 
         return scene_updated
 
