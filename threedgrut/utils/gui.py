@@ -102,11 +102,11 @@ class GUI:
         )
         self.ps_point_cloud_buffer = self.ps_point_cloud.get_buffer("points")
 
-        # Only implemented for NeRF and Colmap dataset
-        if isinstance(train_dataset, DatasetVisualization):
-            train_dataset.create_dataset_camera_visualization()
-        if isinstance(val_dataset, DatasetVisualization):
-            val_dataset.create_dataset_camera_visualization()
+        # # Only implemented for NeRF and Colmap dataset
+        # if isinstance(train_dataset, DatasetVisualization):
+        #     train_dataset.create_dataset_camera_visualization()
+        # if isinstance(val_dataset, DatasetVisualization):
+        #     val_dataset.create_dataset_camera_visualization()
 
         bbox_min, bbox_max = scene_bbox
         nodes = np.array(

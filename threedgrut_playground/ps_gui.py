@@ -17,7 +17,7 @@ from __future__ import annotations
 import copy
 import numpy as np
 import torch
-import os
+import os, glob
 import kaolin
 import polyscope as ps
 import polyscope.imgui as psim
@@ -384,6 +384,9 @@ class Playground:
 
             psim.PopItemWidth()
             psim.TreePop()
+
+            if psim.Button("Save Camera Pose"):
+                self.save_all_camera_poses("./camera_poses")
 
     def _draw_video_recording_controls(self):
         psim.SetNextItemOpen(False, psim.ImGuiCond_FirstUseEver)
@@ -1010,3 +1013,28 @@ class Playground:
         # Finally refresh the canvas by rendering the next pass, if needed
         if self.live_update:
             self.update_render_view_viz()
+
+    @torch.no_grad()
+    def save_all_camera_poses(self, save_dir="./camera_poses"):
+        os.makedirs(save_dir, exist_ok=True)
+
+        # pose 파일이 이미 몇 개 있는지 세어서 다음 idx 결정
+        existing = sorted(glob.glob(os.path.join(save_dir, "pose_*.pt")))
+        idx = len(existing)
+
+        # 현재 Polyscope 뷰를 JSON 문자열로 직렬화
+        view_json = ps.get_view_as_json()
+
+        # 창 크기도 같이 저장
+        w, h = ps.get_window_size()
+
+        torch.save(
+            {
+                "view_json": view_json,  # str
+                "width": w,  # int
+                "height": h,  # int
+            },
+            os.path.join(save_dir, f"pose_{idx:03d}.pt"),
+        )
+
+        logger.info(f"Saved camera pose to {save_dir}/pose_{idx:03d}.pt")

@@ -25,6 +25,7 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 import threedgrut.datasets as datasets
 from threedgrut.model.model import MixtureOfGaussians
+from threedgrut.model.lod_model import MixtureOfGaussiansWithAnchor
 from threedgrut.utils.logger import logger
 from threedgrut.utils.misc import create_summary_writer
 
@@ -85,10 +86,13 @@ class Renderer:
         writer, out_dir, run_name = create_summary_writer(conf, object_name, out_dir, experiment_name, use_wandb=False)
 
         if model is None:
-            # Initialize the model and the optix context
-            model = MixtureOfGaussians(conf)
+            if conf.get("lod", False):
+                ModelClass = MixtureOfGaussiansWithAnchor
+            else:
+                ModelClass = MixtureOfGaussians
+            model = ModelClass(conf)
             # Initialize the parameters from checkpoint
-            model.init_from_checkpoint(checkpoint)
+            model.init_from_checkpoint(checkpoint, False)
         model.build_acc()
 
         return Renderer(
@@ -123,6 +127,48 @@ class Renderer:
             compute_extra_metrics=compute_extra_metrics,
         )
 
+    @classmethod
+    def from_ply(self, config_path, path="", save_gt=True, writer=None, model=None, computes_extra_metrics=True):
+        def load_default_config():
+            from hydra.compose import compose
+            from hydra.initialize import initialize
+            with initialize(version_base=None, config_path='../configs'):
+                conf = compose(config_name=config_path)
+            return conf
+
+        global_step = 0
+
+        conf = load_default_config()
+
+        # overrides
+        if conf["render"]["method"] == "3dgrt":
+            conf["render"]["particle_kernel_density_clamping"] = True
+            conf["render"]["min_transmittance"] = 0.03
+        conf["render"]["enable_kernel_timings"] = True
+
+        object_name = Path(conf.path).stem
+        experiment_name = conf["experiment_name"]
+        writer, out_dir, run_name = create_summary_writer(conf, object_name, conf['out_dir'], experiment_name, use_wandb=False)
+
+        if model is None:
+            if (conf.get('lod', False)):
+                ModelClass = MixtureOfGaussiansWithAnchor
+            else:
+                ModelClass = MixtureOfGaussians
+            model = ModelClass(conf)
+            model.init_from_ply(conf['initial_ply'], init_model=False)
+        model.build_acc()
+
+        return Renderer(
+            model=model,
+            conf=conf,
+            global_step=global_step,
+            out_dir=out_dir,
+            path=path,
+            save_gt=save_gt,
+            writer=writer,
+            compute_extra_metrics=computes_extra_metrics,
+        )
     @torch.no_grad()
     def render_all(self):
         """Render all the images in the test dataset and log the metrics."""
@@ -191,7 +237,7 @@ class Renderer:
             # Compute the loss
             psnr_single_img = criterions["psnr"](outputs["pred_rgb"], gpu_batch.rgb_gt).item()
             psnr.append(psnr_single_img)  # evaluation on valid rays only
-            logger.info(f"Frame {iteration}, PSNR: {psnr[-1]}")
+            logger.info(f"Frame {iteration}, PSNR: {psnr[-1]} inference time: {outputs['frame_time_ms']}ms")
 
             if psnr_single_img > best_psnr:
                 best_psnr = psnr_single_img
@@ -273,3 +319,72 @@ class Renderer:
                 )
 
         return mean_psnr, std_psnr, mean_inference_time
+
+    @torch.no_grad()
+    def render_from_saved_poses(self, save_dir="./camera_poses"):
+        import glob, json
+        import polyscope as ps
+        from threedgrut_playground.utils.kaolin_future.conversions import (
+            polyscope_to_kaolin_camera,
+        )
+
+        output_dir = os.path.join(
+            self.out_dir, f"ours_{int(self.global_step)}", "saved_renders"
+        )
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 저장된 pose 파일 리스트
+        pose_files = sorted(glob.glob(os.path.join(save_dir, "pose_*.pt")))
+        inference_times = []
+
+        # dataloader 길이와 pose 파일 개수가 같다고 가정
+        for idx, (batch, pose_file) in enumerate(zip(self.dataloader, pose_files)):
+            # 1) 원래 뱃치를 가져옴
+            batch_dict = batch
+
+            # 2) 저장된 pose 로드
+            saved = torch.load(pose_file)
+            view_json = saved["view_json"]
+            w, h = saved["width"], saved["height"]
+
+            # 3) Polyscope에 뷰 복원
+            ps.set_view_from_json(view_json)
+            ps.set_window_size(w, h)
+
+            camera = polyscope_to_kaolin_camera(
+                ps.get_view_camera_parameters(), w, h, device="cuda"
+            )
+
+            # 5) batch_dict["pose"]만 덮어쓰기 (shape: [1,4,4], float32)
+            #    intr, data, mask 등 나머지는 그대로
+            pose_mat = camera.extrinsics.inv_view_matrix()
+            flip = torch.diag(
+                torch.tensor(
+                    [1.0, -1.0, -1.0, 1.0],
+                    device=pose_mat.device,
+                    dtype=pose_mat.dtype,
+                )
+            )
+            pose_mat = pose_mat @ flip
+
+            batch_dict["pose"] = pose_mat.unsqueeze(0).to(torch.float32).to("cuda")
+
+            # 6) GPU로 옮기고 rays/origins/directions 등 세팅
+            gpu_batch = self.dataset.get_gpu_batch_with_intrinsics(batch_dict)
+
+            # 7) 모델 추론
+            outputs = self.model(gpu_batch)
+            pred_rgb = outputs["pred_rgb"].squeeze(0)
+            inference_times.append(outputs["frame_time_ms"])
+
+            # 8) 결과 이미지 저장
+            torchvision.utils.save_image(
+                pred_rgb.permute(2, 0, 1).clip(0, 1),
+                os.path.join(output_dir, f"{idx:05d}.png"),
+            )
+
+        # 평균 추론 시간 로깅
+        mean_time = sum(inference_times) / len(inference_times)
+        logger.info(
+            f"Rendered {len(pose_files)} frames, mean inference time: {mean_time:.2f} ms"
+        )

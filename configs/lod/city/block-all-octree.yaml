@@ -2,7 +2,7 @@
 
 # order in which configs override each other (/* - denotes a relative search path)
 defaults:
-  - /base_gs
+  - /base_octree
   - /dataset: nerf
   - /initialization: random
   - /render: 3dgrt
@@ -10,15 +10,15 @@ defaults:
   
 # overwrite of default parameters
 val_frequency: 999999 # never validate
-lod: False
-n_iterations: 60000
+lod: True
+n_iterations: 30000
 
 export_ingp:
-  enabled: false
+  enabled: False
 
 with_gui: True
 path: data/MatrixCity/pose/block_all
-out_dir: results/lod/city/0526/block_all
-experiment_name: 3dgrt-3dgrt-60000
+out_dir: results/lod/city/0606/block_all
+experiment_name: octree-3dgrt-60000
 dataset:
-  downsample_factor: 1
+  downsample_factor: 4

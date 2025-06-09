@@ -56,10 +56,9 @@ class GSStrategy(BaseStrategy):
             self.densify_grad_norm_accum = torch.zeros((num_gaussians, 1), dtype=torch.float, device=self.model.device)
             self.densify_grad_norm_denom = torch.zeros((num_gaussians, 1), dtype=torch.int, device=self.model.device)
 
-
     def post_backward(self, step: int, scene_extent: float, train_dataset, batch=None, writer=None) -> bool:
         """Callback function to be executed after the `loss.backward()` call."""
-        
+
         # Update densification buffer:
         if check_step_condition(step, 0, self.conf.strategy.densify.end_iteration, 1):
             with torch.cuda.nvtx.range(f"train_{step}_grad_buffer"):
@@ -276,11 +275,10 @@ class GSStrategy(BaseStrategy):
         self.densify_grad_norm_accum = self.densify_grad_norm_accum[valid_mask]
         self.densify_grad_norm_denom = self.densify_grad_norm_denom[valid_mask]
 
-
     def decay_density(self):
         def update_param_fn(name: str, param: torch.Tensor) -> torch.Tensor:
             assert name == "density", "wrong paramaeter passed to update_param_fn"
-            
+
             decayed_densities = self.model.density_activation_inv(self.model.get_density() * self.conf.strategy.density_decay.gamma)
 
             return torch.nn.Parameter(decayed_densities, requires_grad=param.requires_grad)

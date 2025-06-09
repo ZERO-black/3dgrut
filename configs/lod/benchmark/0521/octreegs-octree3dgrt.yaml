@@ -1,0 +1,26 @@
+# @package _global_
+
+# order in which configs override each other (/* - denotes a relative search path)
+defaults:
+  - /base_gs
+  - /dataset: colmap
+  - /initialization: point_cloud
+  - /render: 3dgrt
+  - _self_
+  
+# overwrite of default parameters
+val_frequency: 999999 # never validate
+lod: True
+n_iterations: 0
+
+export_ingp:
+  enabled: false
+
+with_gui: False
+path: data/mipnerf360/garden
+out_dir: results/lod/benchmark/0521/ckpt
+experiment_name: octreegs-octree3dgrt
+initial_ply: '../dataset/ply-files/Octree-AnyGS/garden-rasterization.ply'
+
+dataset:
+  downsample_factor: 4

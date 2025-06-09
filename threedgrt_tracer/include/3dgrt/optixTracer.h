@@ -99,25 +99,25 @@ protected:
         OptixModule moduleTracingBwd;
     }* _state;
 
-     std::vector<std::string> generateDefines(
+    std::vector<std::string> generateDefines(
         float particleKernelDegree,
         bool particleKernelDensityClamping,
         int particleRadianceSphDegree,
         bool enableNormals,
-        bool enableHitCounts
-    );
-    void createPipeline(const OptixDeviceContext context,
-                        const std::string& path,
-                        const std::string& dependencies_path,
-                        const std::string& cuda_path,
-                        const std::vector<std::string>& defines,
-                        const std::string& kernel_name,
-                        uint32_t flags,
-                        OptixModule* module,
-                        OptixPipeline* pipeline,
-                        OptixShaderBindingTable& sbt,
-                        uint32_t numPayloadValues = 32,
-                        const std::vector<std::string>& extra_includes = {});
+        bool enableHitCounts,
+        bool enableLoD = false);
+    virtual void createPipeline(const OptixDeviceContext context,
+                                const std::string& path,
+                                const std::string& dependencies_path,
+                                const std::string& cuda_path,
+                                const std::vector<std::string>& defines,
+                                const std::string& kernel_name,
+                                uint32_t flags,
+                                OptixModule* module,
+                                OptixPipeline* pipeline,
+                                OptixShaderBindingTable& sbt,
+                                uint32_t numPayloadValues                      = 32,
+                                const std::vector<std::string>& extra_includes = {});
     void reallocateBuffer(CUdeviceptr* bufferPtr, size_t& size, size_t newSize, cudaStream_t cudaStream);
     void reallocatePrimGeomBuffer(cudaStream_t stream);
     void reallocateParamsDevice(size_t sz, cudaStream_t stream);
@@ -136,20 +136,20 @@ public:
         bool particleKernelDensityClamping,
         int particleRadianceSphDegree,
         bool enableNormals,
-        bool enableHitCounts);
+        bool enableHitCounts,
+        bool enableLoD = false);
 
-    virtual ~OptixTracer();
+    ~OptixTracer();
 
-    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
-    virtual trace(uint32_t frameNumber,
-                  torch::Tensor rayToWorld,
-                  torch::Tensor rayOri,
-                  torch::Tensor rayDir,
-                  torch::Tensor particleDensity,
-                  torch::Tensor particleRadiance,
-                  uint32_t renderOpts,
-                  int sphDegree,
-                  float minTransmittance);
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> virtual trace(uint32_t frameNumber,
+                                                                                                                       torch::Tensor rayToWorld,
+                                                                                                                       torch::Tensor rayOri,
+                                                                                                                       torch::Tensor rayDir,
+                                                                                                                       torch::Tensor particleDensity,
+                                                                                                                       torch::Tensor particleRadiance,
+                                                                                                                       uint32_t renderOpts,
+                                                                                                                       int sphDegree,
+                                                                                                                       float minTransmittance);
 
     std::tuple<torch::Tensor, torch::Tensor>
     virtual traceBwd(uint32_t frameNumber,

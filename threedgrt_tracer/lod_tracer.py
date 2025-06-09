@@ -19,6 +19,7 @@ from enum import IntEnum
 import torch
 import torch.utils.cpp_extension
 
+from .tracer import Tracer
 from threedgrut.utils.timer import CudaTimer
 from threedgrut.datasets.protocols import Batch
 
@@ -46,7 +47,7 @@ def load_3dgrt_plugin(conf):
 
 # ----------------------------------------------------------------------------
 #
-class Tracer:
+class LoDTracer(Tracer):
     class _Autograd(torch.autograd.Function):
         @staticmethod
         def forward(
@@ -61,28 +62,49 @@ class Tracer:
             mog_scl,
             mog_dns,
             mog_sph,
+            mog_levels,
+            mog_extra_levels,
             render_opts,
             sph_degree,
             min_transmittance,
+            std_dist,
         ):
-            particle_density = torch.concat([mog_pos, mog_dns, mog_rot, mog_scl, torch.zeros_like(mog_dns)], dim=1)
-            (
-                ray_radiance,
-                ray_density,
-                ray_hit_distance,
-                ray_normals,
-                hits_count,
-                mog_visibility,
-            ) = tracer_wrapper.trace(
+            tensors = {
+                "mog_pos": mog_pos,
+                "mog_dns": mog_dns,
+                "mog_rot": mog_rot,
+                "mog_scl": mog_scl,
+                "zeros": torch.zeros_like(mog_dns, device="cuda"),
+            }
+
+            # for name, t in tensors.items():
+            #     print(
+            #         f"{name}: shape={tuple(t.shape)}, device={t.device}, dtype={t.dtype}"
+            #     )
+
+            particle_density = torch.concat(
+                [
+                    mog_pos,
+                    mog_dns,
+                    mog_rot,
+                    mog_scl,
+                    torch.zeros_like(mog_dns),
+                ],
+                dim=1,
+            )
+            ray_radiance, ray_density, ray_hit_distance, ray_normals, hits_count, mog_visibility, lod_mask = tracer_wrapper.trace(
                 frame_id,
                 ray_to_world,
                 ray_ori,
                 ray_dir,
                 particle_density,
                 mog_sph,
+                mog_levels,
+                mog_extra_levels,
                 render_opts,
                 sph_degree,
                 min_transmittance,
+                std_dist,
             )
             ctx.save_for_backward(
                 ray_to_world,
@@ -94,6 +116,7 @@ class Tracer:
                 ray_normals,
                 particle_density,
                 mog_sph,
+                lod_mask,
             )
             ctx.frame_id = frame_id
             ctx.render_opts = render_opts
@@ -111,7 +134,13 @@ class Tracer:
 
         @staticmethod
         def backward(
-            ctx, ray_radiance_grd, ray_density_grd, ray_hit_distance_grd, ray_normals_grd, ray_hits_count_grd_UNUSED, mog_visibility_grd_UNUSED
+            ctx,
+            ray_radiance_grd, 
+            ray_density_grd, 
+            ray_hit_distance_grd, 
+            ray_normals_grd, 
+            ray_hits_count_grd_UNUSED, 
+            mog_visibility_grd_UNUSED
         ):
             (
                 ray_to_world,
@@ -123,6 +152,7 @@ class Tracer:
                 ray_normals,
                 particle_density,
                 mog_sph,
+                lod_mask,
             ) = ctx.saved_variables
             frame_id = ctx.frame_id
             particle_density_grd, mog_sph_grd = ctx.tracer_wrapper.trace_bwd(
@@ -136,6 +166,7 @@ class Tracer:
                 ray_normals,
                 particle_density,
                 mog_sph,
+                lod_mask,
                 ray_radiance_grd,
                 ray_density_grd,
                 ray_hit_distance_grd,
@@ -161,6 +192,9 @@ class Tracer:
                 None,
                 None,
                 None,
+                None,
+                None,
+                None,
             )
 
     class RenderOpts(IntEnum):
@@ -177,7 +211,7 @@ class Tracer:
         torch.zeros(1, device=self.device)  # Create a dummy tensor to force cuda context init
         load_3dgrt_plugin(conf)
 
-        self.tracer_wrapper = _3dgrt_plugin.OptixTracer(
+        self.tracer_wrapper = _3dgrt_plugin.OptixLoDTracer(
             os.path.dirname(__file__),
             torch.utils.cpp_extension.CUDA_HOME,
             self.conf.render.pipeline_type,
@@ -205,7 +239,7 @@ class Tracer:
                 or self.num_update_bvh >= self.conf.render.max_consecutive_bvh_update
             )
             self.tracer_wrapper.build_bvh(
-                gaussians.positions.view(-1, 3).contiguous(),
+                gaussians.get_positions().view(-1, 3).contiguous(),
                 gaussians.rotation_activation(gaussians.rotation).view(-1, 4).contiguous(),
                 gaussians.scale_activation(gaussians.scale).view(-1, 3).contiguous(),
                 gaussians.density_activation(gaussians.density).view(-1, 1).contiguous(),
@@ -221,27 +255,23 @@ class Tracer:
             if self.frame_timer is not None:
                 self.frame_timer.start()
 
-            (
-                pred_rgb,
-                pred_opacity,
-                pred_dist,
-                pred_normals,
-                hits_count,
-                mog_visibility,
-            ) = Tracer._Autograd.apply(
+            (pred_rgb, pred_opacity, pred_dist, pred_normals, hits_count, mog_visibility) = LoDTracer._Autograd.apply(
                 self.tracer_wrapper,
                 frame_id,
                 gpu_batch.T_to_world.contiguous(),
                 gpu_batch.rays_ori.contiguous(),
                 gpu_batch.rays_dir.contiguous(),
-                gaussians.positions.contiguous(),
+                gaussians.get_positions().contiguous(),
                 gaussians.get_rotation().contiguous(),
                 gaussians.get_scale().contiguous(),
                 gaussians.get_density().contiguous(),
                 gaussians.get_features().contiguous(),
+                gaussians.get_levels().contiguous(),
+                gaussians.get_extra_levels().contiguous(),
                 Tracer.RenderOpts.DEFAULT,
                 gaussians.n_active_features,
                 self.conf.render.min_transmittance,
+                gaussians.std_dist,
             )
 
             if self.frame_timer is not None:

@@ -35,6 +35,7 @@ from threedgrut.datasets.protocols import BoundedMultiViewDataset
 from threedgrut.datasets.utils import MultiEpochsDataLoader, DEFAULT_DEVICE
 from threedgrut.model.losses import ssim
 from threedgrut.model.model import MixtureOfGaussians
+from threedgrut.model.lod_model import MixtureOfGaussiansWithAnchor
 from threedgrut.render import Renderer
 from threedgrut.strategy.base import BaseStrategy
 from threedgrut.utils.gui import GUI
@@ -175,7 +176,10 @@ class Trainer3DGRUT:
 
     def init_model(self, conf: DictConfig, scene_extent=None) -> None:
         """Initializes the gaussian model and the optix context"""
-        self.model = MixtureOfGaussians(conf, scene_extent=scene_extent)
+        if conf.get("lod", False):
+            self.model = MixtureOfGaussiansWithAnchor(conf, scene_extent=scene_extent)
+        else:
+            self.model = MixtureOfGaussians(conf, scene_extent=scene_extent)
 
     def init_densification_and_pruning_strategy(self, conf: DictConfig) -> None:
         """Set pre-train / post-train iteration logic. i.e. densification and pruning"""
@@ -183,12 +187,18 @@ class Trainer3DGRUT:
         match self.conf.strategy.method:
             case "GSStrategy":
                 from threedgrut.strategy.gs import GSStrategy
+
                 self.strategy = GSStrategy(conf, self.model)
                 logger.info("🔆 Using GS strategy")
             case "MCMCStrategy":
                 from threedgrut.strategy.mcmc import MCMCStrategy
                 self.strategy = MCMCStrategy(conf, self.model)
                 logger.info("🔆 Using MCMC strategy")
+            case "OctreeStrategy":
+                from threedgrut.strategy.octree import OctreeStrategy
+
+                self.strategy = OctreeStrategy(conf, self.model)
+                logger.info("🔆 Using Octree strategy")
             case _:
                 raise ValueError(f"unrecognized model.strategy {conf.strategy.method}")
 
@@ -234,11 +244,29 @@ class Trainer3DGRUT:
             logger.info(f"🤸 Initiating new 3dgrut training..")
             match conf.initialization.method:
                 case "random":
-                    model.init_from_random_point_cloud(
-                        num_gaussians=conf.initialization.num_gaussians,
-                        xyz_max=conf.initialization.xyz_max,
-                        xyz_min=conf.initialization.xyz_min,
-                    )
+                    if isinstance(model, MixtureOfGaussiansWithAnchor):
+                        logger.info(f"{train_dataset.get_scene_bbox()}")
+
+                        xyz_min_, xyz_max_ = train_dataset.get_scene_bbox()
+                        xyz_min = xyz_min_[:3].to(self.device)  # shape=(3,)
+                        xyz_max = xyz_max_[:3].to(self.device)  # shape=(3,)
+
+                        model.init_from_random_point_cloud(
+                            num_gaussians=conf.initialization.num_gaussians,
+                            observer_pts=torch.tensor(
+                                train_dataset.get_observer_points(),
+                                dtype=torch.float32,
+                                device=self.device,
+                            ),
+                            xyz_min=xyz_min,
+                            xyz_max=xyz_max,
+                        )
+                    else:
+                        model.init_from_random_point_cloud(
+                            num_gaussians=conf.initialization.num_gaussians,
+                            xyz_max=conf.initialization.xyz_max,
+                            xyz_min=conf.initialization.xyz_min,
+                        )
                 case "colmap":
                     observer_points = torch.tensor(
                         train_dataset.get_observer_points(), dtype=torch.float32, device=self.device
@@ -254,6 +282,18 @@ class Trainer3DGRUT:
                 case "checkpoint":
                     checkpoint = torch.load(conf.initialization.path)
                     model.init_from_checkpoint(checkpoint, setup_optimizer=False)
+                case "initial_point_cloud":
+                    try:
+                        ply_path = os.path.join(conf.path, "point_cloud.ply")
+                        observer_points = torch.tensor(
+                            train_dataset.get_observer_points(),
+                            dtype=torch.float32,
+                            device=self.device,
+                        )
+                        model.init_from_initial_point_cloud(ply_path, observer_points)
+                    except FileNotFoundError as e:
+                        logger.error(e)
+                        raise e
                 case _:
                     raise ValueError(
                         f"unrecognized initialization.method {conf.initialization.method}, choose from [colmap, point_cloud, random, checkpoint]"
@@ -389,7 +429,7 @@ class Trainer3DGRUT:
         rgb_gt = gpu_batch.rgb_gt
         rgb_pred = outputs["pred_rgb"]
         mask = gpu_batch.mask
-        
+
         # Mask out the invalid pixels if the mask is provided
         if mask is not None:
             rgb_gt = rgb_gt * mask
@@ -621,7 +661,8 @@ class Trainer3DGRUT:
 
             self.teardown_dataloaders()
             self.save_checkpoint(last_checkpoint=True)
-
+            t = self.model.get_positions()
+            print(f"shape={tuple(t.shape)}, device={t.device}, dtype={t.dtype}")
             # Renderer test split
             renderer = Renderer.from_preloaded_model(
                 model=self.model,
