@@ -116,7 +116,7 @@ public:
         bool enableNormals,
         bool enableHitCounts);
 
-    ~HybridOptixTracer() override;
+    ~HybridOptixTracer();
 
     void buildMeshBVH(torch::Tensor meshVerts,
                             torch::Tensor meshFaces,
