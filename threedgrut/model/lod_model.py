@@ -88,15 +88,15 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         self.std_dist = 0
 
         # hyper parameter
-        self.max_level = self.conf.model.max_level
-        self.init_level = self.conf.model.init_level
-        self.extend = self.conf.model.extend
-        self.base_layer = self.conf.model.base_layer
-        self.fork = self.conf.model.fork
-        self.default_voxel_size = self.conf.model.default_voxel_size
-        self.padding = self.conf.model.padding
-        self.visible_threshold = self.conf.model.visible_threshold
-        self.dist_ratio = self.conf.model.dist_ratio
+        self.max_level = self.conf.model.get("max_level", -1)
+        self.init_level = self.conf.model.get("init_level", -1)
+        self.extend = self.conf.model.get("extend", -1)
+        self.base_layer = self.conf.model.get("base_layer", -1)
+        self.fork = self.conf.model.get("fork", 2)
+        self.default_voxel_size = self.conf.model.get("default_voxel_size", -1)
+        self.padding = self.conf.model.get("padding", None)
+        self.visible_threshold = self.conf.model.get("visible_threshold", None)
+        self.dist_ratio = self.conf.model.get("dist_ratio", None)
         # self.n_offsets = self.conf.model.n_offsets
 
     def setup_scheduler(self):
