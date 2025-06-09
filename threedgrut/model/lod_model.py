@@ -6,17 +6,20 @@ from plyfile import PlyData, PlyElement
 
 import threedgrt_tracer
 from threedgrut.datasets.utils import read_next_bytes, read_colmap_points3D_text
-from threedgrut.model.model import MixtureOfGaussians 
+from threedgrut.model.model import MixtureOfGaussians
 from threedgrut.utils.logger import logger
 from threedgrut.utils.misc import (
     get_activation_function,
     get_scheduler,
     sh_degree_to_num_features,
     sh_degree_to_specular_dim,
-    to_np, to_torch, quaternion_to_so3
+    to_np,
+    to_torch,
+    quaternion_to_so3,
 )
 from threedgrut.utils.render import RGB2SH, SH2RGB
 from threedgrut.utils.knn import knn
+
 
 class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
     @property
@@ -47,7 +50,7 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
     def get_num_gaussians(self) -> int:
         return len(self.density)
 
-    def get_anchor_masks(self)-> torch.Tensor:
+    def get_anchor_masks(self) -> torch.Tensor:
         return self.anchor_mask
 
     def map_to_int_level(self, pred_level, cur_level):
@@ -84,6 +87,18 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         self.extra_levels = torch.nn.Parameter(torch.empty([0, 1]), requires_grad=False)
         self.std_dist = 0
 
+        # hyper parameter
+        self.max_level = self.conf.model.max_level
+        self.init_level = self.conf.model.init_level
+        self.extend = self.conf.model.extend
+        self.base_layer = self.conf.model.base_layer
+        self.fork = self.conf.model.fork
+        self.default_voxel_size = self.conf.model.default_voxel_size
+        self.padding = self.conf.model.padding
+        self.visible_threshold = self.conf.model.visible_threshold
+        self.dist_ratio = self.conf.model.dist_ratio
+        # self.n_offsets = self.conf.model.n_offsets
+
     def setup_scheduler(self):
         self.schedulers = {}
         for name, args in self.conf.scheduler.items():
@@ -112,6 +127,7 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         self.level = checkpoint["level"]
         self.extra_level = checkpoint["extra_level"]
         self.std_dist = checkpoint["std_dist"]
+        logger.info(f"# of gaussians: {self.num_gaussians}")
 
         if self.progressive_training:
             self.feature_dim_increase_interval = checkpoint[
@@ -147,8 +163,10 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
 
         for cam in cameras:
             cam_info = torch.tensor((cam[0], cam[1], cam[2], 1)).float().cuda()
-            self.cam_infos = torch.cat((self.cam_infos, cam_info.unsqueeze(dim=0)), dim=0)
-            dist = torch.sqrt(torch.sum((points - cam)**2, dim=1))
+            self.cam_infos = torch.cat(
+                (self.cam_infos, cam_info.unsqueeze(dim=0)), dim=0
+            )
+            dist = torch.sqrt(torch.sum((points - cam) ** 2, dim=1))
             dist_max = torch.quantile(dist, self.dist_ratio)
             dist_min = torch.quantile(dist, 1 - self.dist_ratio)
             new_dist = torch.tensor([dist_min, dist_max]).float().cuda()
@@ -159,94 +177,115 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         dist_min = torch.quantile(all_dist, 1 - self.dist_ratio)
         self.std_dist = float(dist_max)
         if self.max_level == -1:
-            self.max_level = torch.round(torch.log2(dist_max/dist_min)/math.log2(self.fork)).int().item() + 1
+            self.max_level = (
+                torch.round(torch.log2(dist_max / dist_min) / math.log2(self.fork))
+                .int()
+                .item()
+                + 1
+            )
         if self.init_level == -1:
-            self.init_level = int(self.max_level/2)
+            self.init_level = int(self.max_level / 2)
 
     def octree_sample(self, points, colors):
         torch.cuda.synchronize()
         self.pos = torch.empty(0, 3).float().cuda()
         self.colors = torch.empty(0, 3).float().cuda()
-        self.level = torch.empty(0).int().cuda() 
+        self.level = torch.empty(0).int().cuda()
 
         for cur_level in range(self.max_level):
-            cur_size = self.voxel_size/(float(self.fork) ** cur_level)
+            cur_size = self.voxel_size / (float(self.fork) ** cur_level)
             new_candidates = torch.round((points - self.init_pos) / cur_size)
-            new_candidates_unique, inverse_indices = torch.unique(new_candidates, return_inverse=True, dim=0)
+            new_candidates_unique, inverse_indices = torch.unique(
+                new_candidates, return_inverse=True, dim=0
+            )
             new_positions = new_candidates_unique * cur_size + self.init_pos
             new_positions += self.padding * cur_size
-            new_levels = torch.ones(new_positions.shape[0], dtype=torch.int, device="cuda") * cur_level
-            new_colors = scatter_max(colors, inverse_indices.unsqueeze(1).expand(-1, colors.size(1)), dim=0)[0]
+            new_levels = (
+                torch.ones(new_positions.shape[0], dtype=torch.int, device="cuda")
+                * cur_level
+            )
+            new_colors = scatter_max(
+                colors, inverse_indices.unsqueeze(1).expand(-1, colors.size(1)), dim=0
+            )[0]
             self.pos = torch.concat((self.pos, new_positions), dim=0)
             self.colors = torch.concat((self.colors, new_colors), dim=0)
             self.level = torch.concat((self.level, new_levels), dim=0)
         torch.cuda.synchronize()
 
     def weed_out(self, gaussian_positions, gaussian_levels):
-        visible_count = torch.zeros(gaussian_positions.shape[0], dtype=torch.int, device="cuda")
+        visible_count = torch.zeros(
+            gaussian_positions.shape[0], dtype=torch.int, device="cuda"
+        )
         for cam in self.cam_infos:
             cam_center, scale = cam[:3], cam[3]
-            dist = torch.sqrt(torch.sum((gaussian_positions - cam_center)**2, dim=1)) * scale
-            pred_level = torch.log2(self.std_dist/dist)/math.log2(self.fork)   
+            dist = (
+                torch.sqrt(torch.sum((gaussian_positions - cam_center) ** 2, dim=1))
+                * scale
+            )
+            pred_level = torch.log2(self.std_dist / dist) / math.log2(self.fork)
             int_level = self.map_to_int_level(pred_level, self.max_level - 1)
             visible_count += (gaussian_levels <= int_level).int()
-        visible_count = visible_count/len(self.cam_infos)
-        weed_mask = (visible_count > self.visible_threshold)
+        visible_count = visible_count / len(self.cam_infos)
+        weed_mask = visible_count > self.visible_threshold
         mean_visible = torch.mean(visible_count)
-        return gaussian_positions[weed_mask], gaussian_levels[weed_mask], mean_visible, weed_mask
+        return (
+            gaussian_positions[weed_mask],
+            gaussian_levels[weed_mask],
+            mean_visible,
+            weed_mask,
+        )
 
-    def default_initialize_from_points(self, pts, observer_pts, colors=None, use_observer_pts=True):
-        # hyper parameter
-        self.max_level = -1
-        self.init_level = -1
-        self.extend = 1.1
-        self.base_layer = 11
-        self.fork = 2
-        self.default_voxel_size = 0.02
-        self.padding = 0.0
-        self.visible_threshold = 0.9
-        self.dist_ratio = 0.999
-        self.n_offsets = 1
+    def default_initialize_from_points(
+        self, pts, observer_pts, colors=None, use_observer_pts=True
+    ):
         logger.info(f"Generating Octree...")
         self.set_level(pts, observer_pts)
         # unknown
         # self.spatial_lr_scale = spatial_lr_scale
 
-        box_min = torch.min(pts)*self.extend
-        box_max = torch.max(pts)*self.extend
+        box_min = torch.min(pts) * self.extend
+        box_max = torch.max(pts) * self.extend
         box_d = box_max - box_min
 
         if self.base_layer < 0:
-            self.base_layer = torch.round(torch.log2(box_d/self.default_voxel_size)).int().item()-(self.max_level//2)+1
+            self.base_layer = (
+                torch.round(torch.log2(box_d / self.default_voxel_size)).int().item()
+                - (self.max_level // 2)
+                + 1
+            )
 
-        self.voxel_size = box_d/(float(self.fork) ** self.base_layer)
+        self.voxel_size = box_d / (float(self.fork) ** self.base_layer)
         self.init_pos = torch.tensor([box_min, box_min, box_min]).float().cuda()
         self.octree_sample(pts, colors)
 
         if self.visible_threshold < 0:
             self.visible_threshold = 0.0
-            self.pos, self.level, self.visible_threshold, _ = self.weed_out(self.pos, self.level)
+            self.pos, self.level, self.visible_threshold, _ = self.weed_out(
+                self.pos, self.level
+            )
         self.pos, self.level, _, weed_mask = self.weed_out(self.pos, self.level)
         self.colors = self.colors[weed_mask]
 
-        logger.info(f'Branches of Tree: {self.fork}')
-        logger.info(f'Base Layer of Tree: {self.base_layer}')
-        logger.info(f'Visible Threshold: {self.visible_threshold}')
-        logger.info(f'LOD Levels: {self.max_level}')
-        logger.info(f'Initial Levels: {self.init_level}')
-        logger.info(f'Initial Voxel Number: {self.pos.shape[0]}')
-        logger.info(f'Min Voxel Size: {self.voxel_size/(2.0 ** (self.max_level - 1))}')
-        logger.info(f'Max Voxel Size: {self.voxel_size}')
+        logger.info(f"Branches of Tree: {self.fork}")
+        logger.info(f"Base Layer of Tree: {self.base_layer}")
+        logger.info(f"Visible Threshold: {self.visible_threshold}")
+        logger.info(f"LOD Levels: {self.max_level}")
+        logger.info(f"Initial Levels: {self.init_level}")
+        logger.info(f"Initial Voxel Number: {self.pos.shape[0]}")
+        logger.info(f"Min Voxel Size: {self.voxel_size/(2.0 ** (self.max_level - 1))}")
+        logger.info(f"Max Voxel Size: {self.voxel_size}")
 
         fused_point_cloud, fused_color = self.pos, RGB2SH(self.colors / 255.0)
         n_features = sh_degree_to_specular_dim(self.max_n_features)
         offsets = torch.zeros((fused_point_cloud.shape[0], 3)).float().cuda()
         features = torch.zeros((fused_color.shape[0], 3 + n_features)).float().cuda()
         features[:, :3] = fused_color
-        features_albedo, features_specular = torch.split(features, [3, n_features], dim=1)
+        features_albedo, features_specular = torch.split(
+            features, [3, n_features], dim=1
+        )
 
         dist2 = (knn(fused_point_cloud, 4)[:, 1:] ** 2).mean(dim=-1)  # [N,]
-        scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 6)
+        scales = torch.log(torch.sqrt(dist2))[..., None].repeat(1, 6)
         rots = torch.rand((fused_point_cloud.shape[0], 4), device=self.device)
         rots[:, 0] = 1
         opacities = self.density_activation_inv(
@@ -257,8 +296,8 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         )
 
         self.anchor = torch.nn.Parameter(fused_point_cloud)
-        self.offset =  torch.nn.Parameter(offsets)
-        self.offset_scale = torch.nn.Parameter(scales[:, :3])     
+        self.offset = torch.nn.Parameter(offsets)
+        self.offset_scale = torch.nn.Parameter(scales[:, :3])
         self.features_albedo = torch.nn.Parameter(features_albedo)
         self.features_specular = torch.nn.Parameter(features_specular)
         self.scale = torch.nn.Parameter(scales[:, 3:])
@@ -285,14 +324,14 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
 
         for line in plydata.obj_info:
             key, value = line.split()
-            if (key == "standard_dist"):
+            if key == "standard_dist":
                 self.std_dist = float(value)
                 break
 
         # 1. anchor, offset
-        mogt_anchor = np.stack((np.asarray(v["x"]),
-                        np.asarray(v["y"]),
-                        np.asarray(v["z"])),  axis=1)
+        mogt_anchor = np.stack(
+            (np.asarray(v["x"]), np.asarray(v["y"]), np.asarray(v["z"])), axis=1
+        )
         num_gaussians = mogt_anchor.shape[0]
 
         mogt_offset = np.zeros((num_gaussians, 3))
@@ -301,40 +340,46 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         mogt_offset[:, 2] = np.asarray(v["f_offset_2"])
 
         # 2. density
-        mogt_densities = np.asarray(v['opacity'])[..., np.newaxis]
+        mogt_densities = np.asarray(v["opacity"])[..., np.newaxis]
 
         # 3. albedo
         mogt_albedo = np.zeros((num_gaussians, 3))
-        mogt_albedo[:,0] = np.asarray(v['f_dc_0'])
-        mogt_albedo[:,1] = np.asarray(v['f_dc_1'])
-        mogt_albedo[:,2] = np.asarray(v['f_dc_2'])
+        mogt_albedo[:, 0] = np.asarray(v["f_dc_0"])
+        mogt_albedo[:, 1] = np.asarray(v["f_dc_1"])
+        mogt_albedo[:, 2] = np.asarray(v["f_dc_2"])
 
         # 4. specular
-        extra = sorted([p.name for p in v.properties if p.name.startswith("f_rest_")],
-                    key=lambda x: int(x.split('_')[-1]))
-        num_spec = (self.max_n_features+1)**2 - 1
+        extra = sorted(
+            [p.name for p in v.properties if p.name.startswith("f_rest_")],
+            key=lambda x: int(x.split("_")[-1]),
+        )
+        num_spec = (self.max_n_features + 1) ** 2 - 1
         mogt_spec = np.zeros((num_gaussians, len(extra)))
         for i, name in enumerate(extra):
-            mogt_spec[:,i] = np.asarray(v[name])
-        mogt_spec = mogt_spec.reshape((num_gaussians, 3, num_spec)).transpose(0,2,1).reshape((num_gaussians, num_spec*3))
+            mogt_spec[:, i] = np.asarray(v[name])
+        mogt_spec = (
+            mogt_spec.reshape((num_gaussians, 3, num_spec))
+            .transpose(0, 2, 1)
+            .reshape((num_gaussians, num_spec * 3))
+        )
 
         # 5. scale: exp(scale_0~5)
         scale_names = [p.name for p in v.properties if p.name.startswith("scale_")]
-        scale_names = sorted(scale_names, key = lambda x: int(x.split('_')[-1]))
+        scale_names = sorted(scale_names, key=lambda x: int(x.split("_")[-1]))
         mogt_scales = np.zeros((num_gaussians, len(scale_names)))
         for idx, attr_name in enumerate(scale_names):
             mogt_scales[:, idx] = np.asarray(v[attr_name])
 
         # 6. rotation
         rot_names = [p.name for p in v.properties if p.name.startswith("rot")]
-        rot_names = sorted(rot_names, key = lambda x: int(x.split('_')[-1]))
+        rot_names = sorted(rot_names, key=lambda x: int(x.split("_")[-1]))
         mogt_rotation = np.zeros((num_gaussians, len(rot_names)))
         for idx, attr_name in enumerate(rot_names):
             mogt_rotation[:, idx] = np.asarray(v[attr_name])
 
         # 7. level
-        mogt_level = np.asarray(v['level'])[..., np.newaxis]
-        mogt_extra_level = np.asarray(v['extra_level'])[..., np.newaxis]
+        mogt_level = np.asarray(v["level"])[..., np.newaxis]
+        mogt_extra_level = np.asarray(v["extra_level"])[..., np.newaxis]
 
         t = torch.tensor
         dev = self.device
@@ -347,15 +392,32 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         self.offset_scale = torch.nn.Parameter(
             t(mogt_scales[:, :3], dtype=self.anchor.dtype, device=dev)
         )
-        self.density          = torch.nn.Parameter(t(mogt_densities, dtype=self.density.dtype, device=dev))
-        self.features_albedo  = torch.nn.Parameter(t(mogt_albedo, dtype=self.features_albedo.dtype, device=dev))
-        self.features_specular= torch.nn.Parameter(t(mogt_spec,   dtype=self.features_specular.dtype, device=dev))
-        self.scale            = torch.nn.Parameter(t(mogt_scales[:, 3:], dtype=self.scale.dtype, device=dev))
-        self.rotation         = torch.nn.Parameter(t(mogt_rotation,dtype=self.rotation.dtype, device=dev))
-        self.level            = torch.nn.Parameter(t(mogt_level, dtype=self.levels.dtype, device=dev), requires_grad=False)
-        self.extra_level      = torch.nn.Parameter(t(mogt_extra_level, dtype=self.extra_levels.dtype, device=dev), requires_grad=False)
-        self.anchor_mask      = torch.ones(self.num_gaussians, dtype=torch.bool, device="cuda")
-        self.positions        = t(mogt_anchor + mogt_offset * np.exp(mogt_scales[:, :3]))
+        self.density = torch.nn.Parameter(
+            t(mogt_densities, dtype=self.density.dtype, device=dev)
+        )
+        self.features_albedo = torch.nn.Parameter(
+            t(mogt_albedo, dtype=self.features_albedo.dtype, device=dev)
+        )
+        self.features_specular = torch.nn.Parameter(
+            t(mogt_spec, dtype=self.features_specular.dtype, device=dev)
+        )
+        self.scale = torch.nn.Parameter(
+            t(mogt_scales[:, 3:], dtype=self.scale.dtype, device=dev)
+        )
+        self.rotation = torch.nn.Parameter(
+            t(mogt_rotation, dtype=self.rotation.dtype, device=dev)
+        )
+        self.level = torch.nn.Parameter(
+            t(mogt_level, dtype=self.levels.dtype, device=dev), requires_grad=False
+        )
+        self.extra_level = torch.nn.Parameter(
+            t(mogt_extra_level, dtype=self.extra_levels.dtype, device=dev),
+            requires_grad=False,
+        )
+        self.anchor_mask = torch.ones(
+            self.num_gaussians, dtype=torch.bool, device="cuda"
+        )
+        self.positions = t(mogt_anchor + mogt_offset * np.exp(mogt_scales[:, :3]))
         self.n_active_features = self.max_n_features
 
         if init_model:
@@ -374,6 +436,7 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
         set_optimizable_parameters: bool = True,
     ):
         logger.info(f"Generating random point cloud ({num_gaussians})...")
+        logger.info(f"{xyz_min.shape} {xyz_max.shape}")
 
         fused_point_cloud = (
             torch.rand((num_gaussians, 3), dtype=dtype, device=self.device)

@@ -157,9 +157,9 @@ class OctreeStrategy(GSStrategy):
             scales = self.model.get_scale()  # shape: (N, 3)
             large_scale_mask = (scales > 2 * cur_size).any(dim=1) & level_mask
 
-            with torch.no_grad():
-                # ln(2)를 빼서 exp(raw_scale - ln(2)) = exp(raw_scale)/2
-                self.model.scale.data[large_scale_mask] -= math.log(2)
+            # with torch.no_grad():
+            #     # ln(2)를 빼서 exp(raw_scale - ln(2)) = exp(raw_scale)/2
+            #     self.model.scale.data[large_scale_mask] -= math.log(2)
 
             # 5) 같은 레벨 분할 후보
             candidate_same_level = (
@@ -312,11 +312,8 @@ class OctreeStrategy(GSStrategy):
                         dtype=torch.int, device="cuda"
                     ) * (cur_level + 1)  # [U2]
 
-                    # candidate_anchor_ds, new_level_ds, mean_vis, weed_ds_mask = (
-                    #     self.model.weed_out(candidate_anchor_ds, new_level_ds)
-                    # )
-                    weed_ds_mask = torch.ones(
-                        candidate_anchor_ds.shape[0], dtype=torch.bool, device="cuda"
+                    candidate_anchor_ds, new_level_ds, mean_vis, weed_ds_mask = (
+                        self.model.weed_out(candidate_anchor_ds, new_level_ds)
                     )
                     # logger.info(
                     #     f"cur_level={cur_level} ds before weed_out: {candidate_anchor_ds.shape[0]} → after: {weed_ds_mask.sum().item()}, mean_visible={mean_vis.item():.3f}"
@@ -345,12 +342,10 @@ class OctreeStrategy(GSStrategy):
                         dtype=torch.int, device="cuda"
                     ) * (cur_level + 1)  # [U2']
 
-                    # candidate_anchor_ds, new_level_ds, _, weed_ds_mask = self.model.weed_out(
-                    #     candidate_anchor_ds, new_level_ds
-                    # )
-                    weed_ds_mask = torch.ones(
-                        candidate_anchor_ds.shape[0], dtype=torch.bool, device="cuda"
+                    candidate_anchor_ds, new_level_ds, _, weed_ds_mask = (
+                        self.model.weed_out(candidate_anchor_ds, new_level_ds)
                     )
+
                     remove_dup_ds_clone = remove_dup_ds.clone()
                     remove_dup_ds[remove_dup_ds_clone] = weed_ds_mask
                     selected_features_unique_ds = selected_features_unique_ds[

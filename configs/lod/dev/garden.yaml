@@ -4,7 +4,7 @@
 defaults:
   - /base_octree
   - /dataset: colmap
-  - /initialization: colmap
+  - /initialization: random
   - /render: 3dgrt
   - _self_
   

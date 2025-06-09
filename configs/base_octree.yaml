@@ -69,6 +69,16 @@ model:
     color: black # one of [black, white, random] needs to be defined if name == background-color
 
   print_stats: true
+  max_level: -1
+  init_level: -1
+  extend: 1.1
+  base_layer: 11
+  fork: 2
+  default_voxel_size: 0.02
+  padding: 0.0
+  visible_threshold: 0.9
+  dist_ratio: 0.999
+  # n_offsets: 1
 
 checkpoint:
   iterations: ${int_list:[ 7000, 30000 ]}
