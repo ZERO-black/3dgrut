@@ -422,6 +422,8 @@ class MixtureOfGaussians(torch.nn.Module):
             self.setup_optimizer(state_dict=checkpoint["optimizer"])
         self.validate_fields()
 
+        logger.info(f"# of gaussians: {self.positions.shape[0]}")
+
     def default_initialize_from_points(self, pts, observer_pts, colors=None, use_observer_pts=True):
         """
         Given an Nx3 array of points (and optionally Nx3 rgb colors),
