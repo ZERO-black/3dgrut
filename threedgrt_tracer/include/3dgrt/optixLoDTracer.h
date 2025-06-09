@@ -23,16 +23,7 @@
 #include <3dgrt/pipelineDefinitions.h>
 #include <3dgrt/optixTracer.h>
 
-class OptixLoDTracer: public OptixTracer {
-
-protected:
-    std::vector<std::string> generateDefines(
-        float particleKernelDegree,
-        bool particleKernelDensityClamping,
-        int particleRadianceSphDegree,
-        bool enableNormals,
-        bool enableHitCounts
-    ) override;
+class OptixLoDTracer : public OptixTracer {
 
 public:
     OptixLoDTracer(
@@ -46,7 +37,9 @@ public:
         bool particleKernelDensityClamping,
         int particleRadianceSphDegree,
         bool enableNormals,
-        bool enableHitCounts): OptixTracer(path, cuda_path, pipeline, backwardPipeline, primitive, particleKernelDegree, particleKernelMinResponse, particleKernelDensityClamping, particleRadianceSphDegree, enableNormals, enableHitCounts){}
+        bool enableHitCounts)
+        : OptixTracer(path, cuda_path, pipeline, backwardPipeline, primitive, particleKernelDegree, particleKernelMinResponse, particleKernelDensityClamping, particleRadianceSphDegree, enableNormals, enableHitCounts, true) {
+    }
     ~OptixLoDTracer() {}
 
     std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> trace(uint32_t frameNumber,

@@ -1,17 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-// SPDX-License-Identifier: Apache-2.0
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -43,33 +30,19 @@
 // OptixTracer
 //------------------------------------------------------------------------------
 
-std::vector<std::string> OptixLoDTracer::generateDefines(
-    float particleKernelDegree,
-    bool particleKernelDensityClamping,
-    int particleRadianceSphDegree,
-    bool enableNormals,
-    bool enableHitCounts) {
-    std::vector<std::string> defines = OptixLoDTracer::generateDefines(particleKernelDegree, particleKernelDensityClamping, particleRadianceSphDegree, enableNormals, enableHitCounts);
-    if (_state) {
-        defines.emplace_back("-DENABLE_LOD")  ;
-    }
-    return defines;
-}
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> OptixLoDTracer::trace(uint32_t frameNumber,
+                                                                                                                                          torch::Tensor rayToWorld,
+                                                                                                                                          torch::Tensor rayOri,
+                                                                                                                                          torch::Tensor rayDir,
+                                                                                                                                          torch::Tensor particleDensity,
+                                                                                                                                          torch::Tensor particleRadiance,
+                                                                                                                                          torch::Tensor particleLevels,
+                                                                                                                                          torch::Tensor particleExtraLevels,
+                                                                                                                                          uint32_t renderOpts,
+                                                                                                                                          int sphDegree,
+                                                                                                                                          float minTransmittance, float std_dist) {
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
-OptixLoDTracer::trace(uint32_t frameNumber,
-                      torch::Tensor rayToWorld,
-                      torch::Tensor rayOri,
-                      torch::Tensor rayDir,
-                      torch::Tensor particleDensity,
-                      torch::Tensor particleRadiance,
-                      torch::Tensor particleLevels,
-                      torch::Tensor particleExtraLevels,
-                      uint32_t renderOpts,
-                      int sphDegree,
-                      float minTransmittance, float std_dist) {
-
-    const torch::TensorOptions opts  = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
+                                                                                                                                            const torch::TensorOptions opts  = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
     torch::Tensor rayRad             = torch::empty({rayOri.size(0), rayOri.size(1), rayOri.size(2), 3}, opts);
     torch::Tensor rayDns             = torch::empty({rayOri.size(0), rayOri.size(1), rayOri.size(2), 1}, opts);
     torch::Tensor rayHit             = torch::empty({rayOri.size(0), rayOri.size(1), rayOri.size(2), 2}, opts);
@@ -82,8 +55,8 @@ OptixLoDTracer::trace(uint32_t frameNumber,
     std::chrono::high_resolution_clock::time_point frame_start = std::chrono::high_resolution_clock::now();
     torch::Tensor lodMask                                      = torch::empty({particleDensity.size(0)}, torch::dtype(torch::kUInt8).device(torch::kCUDA));
     static double total_time                                   = 0.0;
-    static int frame_count                                     = 0   ;
-    float host_eye[3] = {0,0,0};
+    static int frame_count                                     = 0;
+    float host_eye[3]                                          = {0, 0, 0};
     CUDA_CHECK(cudaMemcpy(
         host_eye,
         rayOri.data_ptr<float>(), // origin x,y,z
@@ -121,12 +94,12 @@ OptixLoDTracer::trace(uint32_t frameNumber,
     paramsHost.frameBounds.y = rayOri.size(1) - 1;
     paramsHost.frameNumber   = frameNumber;
     paramsHost.gPrimNumTri   = _state->gPrimNumTri;
-    
+
     paramsHost.minTransmittance       = minTransmittance;
     paramsHost.hitMinGaussianResponse = _state->particleKernelMinResponse;
     paramsHost.alphaMinThreshold      = 1.0f / 255.0f;
     paramsHost.sphDegree              = sphDegree;
-    
+
     std::memcpy(&paramsHost.rayToWorld[0].x, rayToWorld.cpu().data_ptr<float>(), 3 * sizeof(float4));
     paramsHost.rayOrigin    = packed_accessor32<float, 4>(rayOri);
     paramsHost.rayDirection = packed_accessor32<float, 4>(rayDir);
@@ -157,26 +130,25 @@ OptixLoDTracer::trace(uint32_t frameNumber,
     return std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>(rayRad, rayDns, rayHit, rayNrm, rayHitsCount, particleVisibility, lodMask);
 }
 
-
 std::tuple<torch::Tensor, torch::Tensor>
 OptixLoDTracer::traceBwd(uint32_t frameNumber,
-                      torch::Tensor rayToWorld,
-                      torch::Tensor rayOri,
-                      torch::Tensor rayDir,
-                      torch::Tensor rayRad,
-                      torch::Tensor rayDns,
-                      torch::Tensor rayHit,
-                      torch::Tensor rayNrm,
-                      torch::Tensor particleDensity,
-                      torch::Tensor particleRadiance,
-                      torch::Tensor lodMask,
-                      torch::Tensor rayRadGrd,
-                      torch::Tensor rayDnsGrd,
-                      torch::Tensor rayHitGrd,
-                      torch::Tensor rayNrmGrd,
-                      uint32_t renderOpts,
-                      int sphDegree,
-                      float minTransmittance) {
+                         torch::Tensor rayToWorld,
+                         torch::Tensor rayOri,
+                         torch::Tensor rayDir,
+                         torch::Tensor rayRad,
+                         torch::Tensor rayDns,
+                         torch::Tensor rayHit,
+                         torch::Tensor rayNrm,
+                         torch::Tensor particleDensity,
+                         torch::Tensor particleRadiance,
+                         torch::Tensor lodMask,
+                         torch::Tensor rayRadGrd,
+                         torch::Tensor rayDnsGrd,
+                         torch::Tensor rayHitGrd,
+                         torch::Tensor rayNrmGrd,
+                         uint32_t renderOpts,
+                         int sphDegree,
+                         float minTransmittance) {
 
     const torch::TensorOptions opts    = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
     torch::Tensor particleDensityGrad  = torch::zeros({particleDensity.size(0), particleDensity.size(1)}, opts);
@@ -218,7 +190,6 @@ OptixLoDTracer::traceBwd(uint32_t frameNumber,
     paramsHost.rayNormalGrad      = packed_accessor32<float, 4>(rayNrmGrd);
 
     paramsHost.lodMask = reinterpret_cast<const unsigned char*>(lodMask.data_ptr<uint8_t>());
-
 
     cudaStream_t cudaStream = at::cuda::getCurrentCUDAStream();
 

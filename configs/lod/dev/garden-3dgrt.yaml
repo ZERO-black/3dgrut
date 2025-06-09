@@ -2,15 +2,15 @@
 
 # order in which configs override each other (/* - denotes a relative search path)
 defaults:
-  - /base_octree
+  - /base_gs
   - /dataset: colmap
-  - /initialization: colmap
+  - /initialization: random
   - /render: 3dgrt
   - _self_
   
 # overwrite of default parameters
 val_frequency: 999999 # never validate
-lod: True
+lod: False
 n_iterations: 30000
 
 export_ingp:
@@ -18,8 +18,8 @@ export_ingp:
 
 with_gui: True
 path: data/mipnerf360/garden
-out_dir: results/lod/dev/0608/ckpt
-experiment_name: ver1.0
+out_dir: results/lod/dev/0606/ckpt
+experiment_name: 3dgrt
 
 dataset:
   downsample_factor: 4

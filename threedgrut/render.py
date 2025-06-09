@@ -86,10 +86,13 @@ class Renderer:
         writer, out_dir, run_name = create_summary_writer(conf, object_name, out_dir, experiment_name, use_wandb=False)
 
         if model is None:
-            # Initialize the model and the optix context
-            model = MixtureOfGaussians(conf)
+            if conf.get("lod", False):
+                ModelClass = MixtureOfGaussiansWithAnchor
+            else:
+                ModelClass = MixtureOfGaussians
+            model = ModelClass(conf)
             # Initialize the parameters from checkpoint
-            model.init_from_checkpoint(checkpoint)
+            model.init_from_checkpoint(checkpoint, False)
         model.build_acc()
 
         return Renderer(
@@ -132,7 +135,7 @@ class Renderer:
             with initialize(version_base=None, config_path='../configs'):
                 conf = compose(config_name=config_path)
             return conf
-        
+
         global_step = 0
 
         conf = load_default_config()
@@ -316,3 +319,72 @@ class Renderer:
                 )
 
         return mean_psnr, std_psnr, mean_inference_time
+
+    @torch.no_grad()
+    def render_from_saved_poses(self, save_dir="./camera_poses"):
+        import glob, json
+        import polyscope as ps
+        from threedgrut_playground.utils.kaolin_future.conversions import (
+            polyscope_to_kaolin_camera,
+        )
+
+        output_dir = os.path.join(
+            self.out_dir, f"ours_{int(self.global_step)}", "saved_renders"
+        )
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 저장된 pose 파일 리스트
+        pose_files = sorted(glob.glob(os.path.join(save_dir, "pose_*.pt")))
+        inference_times = []
+
+        # dataloader 길이와 pose 파일 개수가 같다고 가정
+        for idx, (batch, pose_file) in enumerate(zip(self.dataloader, pose_files)):
+            # 1) 원래 뱃치를 가져옴
+            batch_dict = batch
+
+            # 2) 저장된 pose 로드
+            saved = torch.load(pose_file)
+            view_json = saved["view_json"]
+            w, h = saved["width"], saved["height"]
+
+            # 3) Polyscope에 뷰 복원
+            ps.set_view_from_json(view_json)
+            ps.set_window_size(w, h)
+
+            camera = polyscope_to_kaolin_camera(
+                ps.get_view_camera_parameters(), w, h, device="cuda"
+            )
+
+            # 5) batch_dict["pose"]만 덮어쓰기 (shape: [1,4,4], float32)
+            #    intr, data, mask 등 나머지는 그대로
+            pose_mat = camera.extrinsics.inv_view_matrix()
+            flip = torch.diag(
+                torch.tensor(
+                    [1.0, -1.0, -1.0, 1.0],
+                    device=pose_mat.device,
+                    dtype=pose_mat.dtype,
+                )
+            )
+            pose_mat = pose_mat @ flip
+
+            batch_dict["pose"] = pose_mat.unsqueeze(0).to(torch.float32).to("cuda")
+
+            # 6) GPU로 옮기고 rays/origins/directions 등 세팅
+            gpu_batch = self.dataset.get_gpu_batch_with_intrinsics(batch_dict)
+
+            # 7) 모델 추론
+            outputs = self.model(gpu_batch)
+            pred_rgb = outputs["pred_rgb"].squeeze(0)
+            inference_times.append(outputs["frame_time_ms"])
+
+            # 8) 결과 이미지 저장
+            torchvision.utils.save_image(
+                pred_rgb.permute(2, 0, 1).clip(0, 1),
+                os.path.join(output_dir, f"{idx:05d}.png"),
+            )
+
+        # 평균 추론 시간 로깅
+        mean_time = sum(inference_times) / len(inference_times)
+        logger.info(
+            f"Rendered {len(pose_files)} frames, mean inference time: {mean_time:.2f} ms"
+        )

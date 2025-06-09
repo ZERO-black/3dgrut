@@ -69,6 +69,16 @@ model:
     color: black # one of [black, white, random] needs to be defined if name == background-color
 
   print_stats: true
+  max_level: -1
+  init_level: -1
+  extend: 1.1
+  base_layer: 11
+  fork: 2
+  default_voxel_size: 0.02
+  padding: 0.0
+  visible_threshold: 0.9
+  dist_ratio: 0.999
+  # n_offsets: 1
 
 checkpoint:
   iterations: ${int_list:[ 7000, 30000 ]}
@@ -104,11 +114,12 @@ scheduler:
   #   lr_init: ${optimizer.params.positions.lr}
   #   lr_final: 0.0000016
     # max_steps: 30000
-    
+
   offset:
     lr_init: ${optimizer.params.offset.lr}
     lr_final: 0.0001
     type: exp
+    max_steps: 40000
 
   density:
     type: skip

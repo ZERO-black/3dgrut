@@ -69,7 +69,29 @@ class LoDTracer(Tracer):
             min_transmittance,
             std_dist,
         ):
-            particle_density = torch.concat([mog_pos, mog_dns, mog_rot, mog_scl, torch.zeros_like(mog_dns)], dim=1)
+            tensors = {
+                "mog_pos": mog_pos,
+                "mog_dns": mog_dns,
+                "mog_rot": mog_rot,
+                "mog_scl": mog_scl,
+                "zeros": torch.zeros_like(mog_dns, device="cuda"),
+            }
+
+            # for name, t in tensors.items():
+            #     print(
+            #         f"{name}: shape={tuple(t.shape)}, device={t.device}, dtype={t.dtype}"
+            #     )
+
+            particle_density = torch.concat(
+                [
+                    mog_pos,
+                    mog_dns,
+                    mog_rot,
+                    mog_scl,
+                    torch.zeros_like(mog_dns),
+                ],
+                dim=1,
+            )
             ray_radiance, ray_density, ray_hit_distance, ray_normals, hits_count, mog_visibility, lod_mask = tracer_wrapper.trace(
                 frame_id,
                 ray_to_world,
@@ -229,10 +251,9 @@ class LoDTracer(Tracer):
     def render(self, gaussians, gpu_batch: Batch, train=False, frame_id=0):
         num_gaussians = gaussians.num_gaussians
         with torch.cuda.nvtx.range(f"model.forward({num_gaussians} gaussians)"):
-    
+
             if self.frame_timer is not None:
                 self.frame_timer.start()
-
 
             (pred_rgb, pred_opacity, pred_dist, pred_normals, hits_count, mog_visibility) = LoDTracer._Autograd.apply(
                 self.tracer_wrapper,
@@ -259,7 +280,7 @@ class LoDTracer(Tracer):
             pred_rgb, pred_opacity = gaussians.background(
                 gpu_batch.T_to_world.contiguous(), gpu_batch.rays_dir.contiguous(), pred_rgb, pred_opacity, train
             )
-        
+
         if self.frame_timer is not None:
             self.timings["forward_render"] = self.frame_timer.timing()
 

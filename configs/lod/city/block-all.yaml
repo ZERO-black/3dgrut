@@ -16,7 +16,7 @@ n_iterations: 60000
 export_ingp:
   enabled: false
 
-with_gui: False
+with_gui: True
 path: data/MatrixCity/pose/block_all
 out_dir: results/lod/city/0526/block_all
 experiment_name: 3dgrt-3dgrt-60000
