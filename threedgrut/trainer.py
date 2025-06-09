@@ -245,6 +245,12 @@ class Trainer3DGRUT:
             match conf.initialization.method:
                 case "random":
                     if isinstance(model, MixtureOfGaussiansWithAnchor):
+                        logger.info(f"{train_dataset.get_scene_bbox()}")
+
+                        xyz_min_, xyz_max_ = train_dataset.get_scene_bbox()
+                        xyz_min = xyz_min_[:3].to(self.device)  # shape=(3,)
+                        xyz_max = xyz_max_[:3].to(self.device)  # shape=(3,)
+
                         model.init_from_random_point_cloud(
                             num_gaussians=conf.initialization.num_gaussians,
                             observer_pts=torch.tensor(
@@ -252,8 +258,8 @@ class Trainer3DGRUT:
                                 dtype=torch.float32,
                                 device=self.device,
                             ),
-                            xyz_min=train_dataset.get_scene_bbox()[0].cuda(),
-                            xyz_max=train_dataset.get_scene_bbox()[1].cuda(),
+                            xyz_min=xyz_min,
+                            xyz_max=xyz_max,
                         )
                     else:
                         model.init_from_random_point_cloud(

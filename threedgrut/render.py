@@ -92,7 +92,7 @@ class Renderer:
                 ModelClass = MixtureOfGaussians
             model = ModelClass(conf)
             # Initialize the parameters from checkpoint
-            model.init_from_checkpoint(checkpoint)
+            model.init_from_checkpoint(checkpoint, False)
         model.build_acc()
 
         return Renderer(
