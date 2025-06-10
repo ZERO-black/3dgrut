@@ -154,9 +154,6 @@ class OctreeStrategy(GSStrategy):
             next_threshold  = base * update_value
             extra_threshold = base * self.extra_ratio
 
-            scales = self.model.get_scale()  # shape: (N, 3)
-            # large_scale_mask = (scales > 2 * cur_size).any(dim=1) & level_mask
-
             # with torch.no_grad():
             #     # ln(2)를 빼서 exp(raw_scale - ln(2)) = exp(raw_scale)/2
             #     self.model.scale.data[large_scale_mask] -= math.log(2)
@@ -164,7 +161,12 @@ class OctreeStrategy(GSStrategy):
             # 5) 같은 레벨 분할 후보
             candidate_same_level = (
                 (anchor_grads >= base) & (anchor_grads < next_threshold) & level_mask
-            )  # | large_scale_mask
+            )
+
+            if self.conf.strategy.densify.get("large_mask", False):
+                scales = self.model.get_scale()  # shape: (N, 3)
+                large_scale_mask = (scales > 2 * cur_size).any(dim=1) & level_mask
+                candidate_same_level |= large_scale_mask
 
             # 6) 하위 레벨 분할 후보
             candidate_down_level = torch.zeros_like(candidate_same_level)
@@ -526,3 +528,31 @@ class OctreeStrategy(GSStrategy):
         super().prune_densification_buffers(mask)
         self.model.level = self.model.level[mask]
         self.model.extra_level = self.model.extra_level[mask]
+
+    def prune_gaussians_scale(self, dataset):
+        cam_normals = torch.from_numpy(dataset.poses[:, :3, 2]).to(self.model.device)
+        similarities = torch.matmul(self.model.get_positions(), cam_normals.T)
+        cam_dists = similarities.min(dim=1)[0].clamp(min=1e-8)
+        ratio = (
+            self.model.get_scale().min(dim=1)[0]
+            / cam_dists
+            * dataset.cam_intrinsics[0].params.max()
+        )
+
+        # Prune the Gaussians based on their weight
+        mask = ratio >= self.conf.strategy.prune_scale.threshold
+        if self.conf.strategy.print_stats:
+            n_before = mask.shape[0]
+            n_prune = n_before - mask.sum()
+            logger.info(
+                f"Scale-pruned {n_prune} / {n_before} ({n_prune/n_before*100:.2f}%) gaussians"
+            )
+
+        def update_param_fn(name: str, param: torch.Tensor) -> torch.Tensor:
+            return torch.nn.Parameter(param[mask], requires_grad=param.requires_grad)
+
+        def update_optimizer_fn(key: str, v: torch.Tensor) -> torch.Tensor:
+            return v[mask]
+
+        self._update_param_with_optimizer(update_param_fn, update_optimizer_fn)
+        self.prune_densification_buffers(mask)
