@@ -183,17 +183,17 @@ class OctreeStrategy(GSStrategy):
 
             # ------------------------------------------------------------
             # 8) 같은 레벨 후보 앵커 좌표 뽑기
-            cand_same_coords = self.model.get_anchor()[candidate_same_level]  # [M1,3]
+            cand_same_coords = self.model.get_positions()[
+                candidate_same_level
+            ]  # [M1,3]
 
             # 9) 하위 레벨 후보 앵커 좌표 뽑기
-            cand_down_coords = self.model.get_anchor()[candidate_down_level]  # [M2,3]
+            cand_down_coords = self.model.get_positions()[
+                candidate_down_level
+            ]  # [M2,3]
 
             # ------------------------------------------------------------
             # 10) grid cell 계산 및 중복 처리 + weed_out (same 레벨)
-            grid_coords = torch.round(
-                (self.model.get_anchor()[level_mask] - self.model.init_pos) / cur_size - self.model.padding
-            ).int()  # [num_level,3]
-
             selected_grid_coords = torch.round(
                 (cand_same_coords - self.model.init_pos) / cur_size - self.model.padding
             ).int()  # [M1,3]
@@ -230,7 +230,13 @@ class OctreeStrategy(GSStrategy):
                 remove_dup[remove_dup_clone] = weed_mask
                 selected_features_unique = selected_features_unique[weed_mask]
 
-            elif (selected_grid_coords_unique.shape[0] > 0 and grid_coords.shape[0] > 0):
+            elif selected_grid_coords_unique.shape[0] > 0:
+                grid_coords = torch.round(
+                    (self.model.get_anchor()[level_mask] - self.model.init_pos)
+                    / cur_size
+                    - self.model.padding
+                ).int()  # [num_level,3]
+
                 remove_dup_init = self.model.get_remove_duplicates(
                     grid_coords, selected_grid_coords_unique
                 )  # [U1]
@@ -270,11 +276,7 @@ class OctreeStrategy(GSStrategy):
 
             # ------------------------------------------------------------
             # 11) 하위 레벨 분할 후보에 대해서도 같은 처리
-            level_ds_mask = (self.model.get_levels().squeeze(1) == (cur_level + 1))
-            grid_coords_ds = torch.round(
-                (self.model.get_anchor()[level_ds_mask] - self.model.init_pos) / ds_size - self.model.padding
-            ).int()  # [num_level+1,3]
-
+            level_ds_mask = self.model.get_levels().squeeze(1) == (cur_level + 1)
             selected_grid_coords_ds = torch.round(
                 (cand_down_coords - self.model.init_pos) / ds_size - self.model.padding
             ).int()  # [M2,3]
@@ -328,8 +330,14 @@ class OctreeStrategy(GSStrategy):
                     # logger.info(
                     #     f"cur_level={cur_level}  ds survived after model.weed_out: {weed_ds_mask.sum().item()}"
                     # )
-                elif (selected_grid_coords_unique_ds.shape[0] > 0 and
-                    grid_coords_ds.shape[0] > 0):
+                elif (
+                    selected_grid_coords_unique_ds.shape[0] > 0 and level_ds_mask.any()
+                ):
+                    grid_coords_ds = torch.round(
+                        (self.model.get_anchor()[level_ds_mask] - self.model.init_pos)
+                        / ds_size
+                        - self.model.padding
+                    ).int()  # [num_level+1,3]
                     remove_dup_ds_init = self.model.get_remove_duplicates(
                         grid_coords_ds, selected_grid_coords_unique_ds
                     )  # [U2]
