@@ -79,7 +79,7 @@ class OctreeStrategy(GSStrategy):
             self.conf.strategy.prune_scale.end_iteration,
             self.conf.strategy.prune_scale.frequency,
         ):
-            self.prune_gaussians_by_level()
+            self.prune_gaussians_scale(train_dataset)
             scene_updated = True
 
         # Decay the density values
@@ -534,47 +534,6 @@ class OctreeStrategy(GSStrategy):
 
         # Prune the Gaussians based on their weight
         mask = ratio >= self.conf.strategy.prune_scale.threshold
-        if self.conf.strategy.print_stats:
-            n_before = mask.shape[0]
-            n_prune = n_before - mask.sum()
-            logger.info(
-                f"Scale-pruned {n_prune} / {n_before} ({n_prune/n_before*100:.2f}%) gaussians"
-            )
-
-        def update_param_fn(name: str, param: torch.Tensor) -> torch.Tensor:
-            return torch.nn.Parameter(param[mask], requires_grad=param.requires_grad)
-
-        def update_optimizer_fn(key: str, v: torch.Tensor) -> torch.Tensor:
-            return v[mask]
-
-        self._update_param_with_optimizer(update_param_fn, update_optimizer_fn)
-        self.prune_densification_buffers(mask)
-
-    def prune_gaussians_by_level(self):
-        mask = torch.zeros(self.model.num_gaussians, device="cuda", dtype=bool)
-
-        for cur_level in range(self.model.max_level):
-            level_mask = self.model.get_levels().squeeze(1) == cur_level
-            if not level_mask.any():
-                # if self.conf.strategy.print_stats:
-                # logger.info(f"[Level: {cur_level}] 0 gaussians")
-                continue
-
-            cur_size = self.model.voxel_size / (self.fork**cur_level)
-
-            scales = self.model.get_scale()  # shape: (N, 3)
-            large_scale_mask = (scales > 2 * cur_size).any(dim=1) & level_mask
-            mask |= large_scale_mask
-
-            n_before = torch.sum(level_mask)
-            n_prune = torch.sum(large_scale_mask)
-
-            # logger.info(
-            #     f"Scale-pruned [Level:{cur_level}] {n_prune} / {n_before} ({n_prune/n_before*100:.2f}%) gaussians"
-            # )
-
-        mask = ~mask
-
         if self.conf.strategy.print_stats:
             n_before = mask.shape[0]
             n_prune = n_before - mask.sum()
