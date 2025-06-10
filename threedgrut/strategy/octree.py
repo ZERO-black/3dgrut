@@ -30,19 +30,16 @@ class OctreeStrategy(GSStrategy):
 
     def init_densification_buffer(self, checkpoint = None):
         super().init_densification_buffer(checkpoint)
-        if checkpoint is not None:
-            self.anchor_mask = checkpoint["anchor_mask"][0].detach()
-        else:
-            self.anchor_mask = torch.ones(self.model.num_gaussians, dtype=torch.bool)
-            num_level = self.model.max_level - 1 - self.model.init_level
-            if num_level > 0:
-                q = 1 / self.conf.strategy.densify.coarse_factor
-                a1 = self.conf.strategy.densify.coarse_iter*(1-q)/(1-q**num_level)
-                temp_interval = 0
-                for i in range(num_level):
-                    interval = a1 * q ** i + temp_interval
-                    temp_interval = interval
-                    self.coarse_intervals.append(interval)
+        self.anchor_mask = torch.ones(self.model.num_gaussians, dtype=torch.bool)
+        num_level = self.model.max_level - 1 - self.model.init_level
+        if num_level > 0:
+            q = 1 / self.conf.strategy.densify.coarse_factor
+            a1 = self.conf.strategy.densify.coarse_iter * (1 - q) / (1 - q**num_level)
+            temp_interval = 0
+            for i in range(num_level):
+                interval = a1 * q**i + temp_interval
+                temp_interval = interval
+                self.coarse_intervals.append(interval)
 
     @torch.cuda.nvtx.range("update-gradient-buffer")
     def update_gradient_buffer(self, sensor_position: torch.Tensor) -> None:
@@ -124,12 +121,12 @@ class OctreeStrategy(GSStrategy):
 
         total = self.anchor_mask.numel()
         valid = self.anchor_mask.sum().item()
-        logger.info(f"valid offsets: {valid}/{total} ({valid/total*100:.2f}%)")
         g = anchor_grads
-        logger.info(f"mean: {g.mean().item()}")
-        logger.info(f"std: {g.std().item()}")
-        logger.info(f"min: {g.min().item()}, max: {g.max().item()}")
-        logger.info(f"median: {g.median().item()}")
+        # logger.info(f"valid offsets: {valid}/{total} ({valid/total*100:.2f}%)")
+        # logger.info(f"mean: {g.mean().item()}")
+        # logger.info(f"std: {g.std().item()}")
+        # logger.info(f"min: {g.min().item()}, max: {g.max().item()}")
+        # logger.info(f"median: {g.median().item()}")
 
         # 1) prune된 앵커들은 gradient 0으로
         anchor_grads = anchor_grads.clone()
@@ -280,17 +277,9 @@ class OctreeStrategy(GSStrategy):
             selected_grid_coords_ds = torch.round(
                 (cand_down_coords - self.model.init_pos) / ds_size - self.model.padding
             ).int()  # [M2,3]
-            logger.info(
-                f"cur_level={cur_level}  ds raw candidates: {cand_down_coords.shape[0]}"
-            )
-
             selected_grid_coords_unique_ds, inverse_indices_ds = torch.unique(
                 selected_grid_coords_ds, return_inverse=True, dim=0
             )  # [U2,3], [M2]
-            logger.info(
-                f"cur_level={cur_level}  unique ds coords: {selected_grid_coords_unique_ds.shape[0]}"
-            )
-
             unique_mask = torch.zeros(
                 selected_grid_coords_ds.shape[0], dtype=torch.bool
             )
@@ -378,7 +367,6 @@ class OctreeStrategy(GSStrategy):
                     selected_features_unique_ds = torch.zeros(
                         (0, 3), dtype=torch.float, device="cuda"
                     )
-                    logger.info(f"cur_level={cur_level}  ds branch skipped")
             else:
                 candidate_anchor_ds = torch.zeros(
                     (0, 3), dtype=torch.float, device="cuda"
@@ -403,9 +391,6 @@ class OctreeStrategy(GSStrategy):
             new_anchor = torch.cat([candidate_anchor, candidate_anchor_ds], dim=0)  # [M_new,3]
             new_level  = torch.cat([new_level, new_level_ds], dim=0).unsqueeze(1).float().cuda()  # [M_new,1]
             M_new = new_anchor.shape[0]
-            logger.info(
-                f"cur_level={cur_level}, same={candidate_anchor.shape[0]} down={candidate_anchor_ds.shape[0]}"
-            )
 
             # --------------------------------------------------------
             # 14) 새 SH feature (k=1)이므로 간단히 Boolean 인덱싱
@@ -521,9 +506,9 @@ class OctreeStrategy(GSStrategy):
             if self.conf.strategy.print_stats:
                 n_before = init_shape
                 n_after = self.model.num_gaussians
-                logger.info(
-                    f"[Level: {cur_level}] Anchor growed {n_before} -> {n_after} ({n_after/n_before*100:.2f}%) gaussians"
-                )
+                # logger.info(
+                #     f"[Level: {cur_level}] Anchor growed {n_before} -> {n_after} ({n_after/n_before*100:.2f}%) gaussians"
+                # )
         self.reset_densification_buffers()
         if self.conf.strategy.print_stats:
             n_before = init_shape
@@ -566,13 +551,14 @@ class OctreeStrategy(GSStrategy):
         self.prune_densification_buffers(mask)
 
     def prune_gaussians_by_level(self):
-        mask = torch.ones(self.model.num_gaussians, device="cuda", dtype=bool)
+        mask = torch.zeros(self.model.num_gaussians, device="cuda", dtype=bool)
 
         for cur_level in range(self.model.max_level):
             level_mask = self.model.get_levels().squeeze(1) == cur_level
             if not level_mask.any():
-                if self.conf.strategy.print_stats:
-                    logger.info(f"[Level: {cur_level}] 0 gaussians")
+                # if self.conf.strategy.print_stats:
+                # logger.info(f"[Level: {cur_level}] 0 gaussians")
+                continue
 
             cur_size = self.model.voxel_size / (self.fork**cur_level)
 
@@ -583,9 +569,11 @@ class OctreeStrategy(GSStrategy):
             n_before = torch.sum(level_mask)
             n_prune = torch.sum(large_scale_mask)
 
-            logger.info(
-                f"Scale-pruned [Level:{cur_level}] {n_prune} / {n_before} ({n_prune/n_before*100:.2f}%) gaussians"
-            )
+            # logger.info(
+            #     f"Scale-pruned [Level:{cur_level}] {n_prune} / {n_before} ({n_prune/n_before*100:.2f}%) gaussians"
+            # )
+
+        mask = ~mask
 
         if self.conf.strategy.print_stats:
             n_before = mask.shape[0]
