@@ -365,7 +365,7 @@ class OctreeStrategy(GSStrategy):
                         (0,), dtype=torch.int, device="cuda"
                     )
                     selected_features_unique_ds = torch.zeros(
-                        (0, 3), dtype=torch.float, device="cuda"
+                        (0, 48), dtype=torch.float, device="cuda"
                     )
             else:
                 candidate_anchor_ds = torch.zeros(
@@ -379,7 +379,7 @@ class OctreeStrategy(GSStrategy):
                     (0,), dtype=torch.int, device="cuda"
                 )
                 selected_features_unique_ds = torch.zeros(
-                    (0, 3), dtype=torch.float, device="cuda"
+                    (0, 48), dtype=torch.float, device="cuda"
                 )
 
             # ------------------------------------------------------------
