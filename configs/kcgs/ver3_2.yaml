@@ -1,0 +1,36 @@
+# @package _global_
+
+# order in which configs override each other (/* - denotes a relative search path)
+defaults:
+  - /base_octree
+  - /dataset: colmap
+  - /initialization: colmap
+  - /render: 3dgrt
+  - _self_
+
+# overwrite of default parameters
+val_frequency: 999999 # never validate
+lod: True
+n_iterations: 40000
+
+strategy:
+  prune_scale:
+    frequency: 100
+    start_iteration: 1000
+    end_iteration: 25000
+    threshold: 0.9
+  densify:
+    large_mask: false
+  prune:
+    start_iteration: 1000
+
+with_gui: True
+path: data/mipnerf360/garden
+out_dir: results/lod/dev/0608/ckpt
+experiment_name: position-fixed
+
+dataset:
+  downsample_factor: 4
+
+model:
+  visible_threshold: 0.01
