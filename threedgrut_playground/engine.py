@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from kaolin.render.camera import Camera, generate_centered_pixel_coords, generate_pinhole_rays
 from threedgrut.utils.logger import logger
 from threedgrut.model.model import MixtureOfGaussians
+from threedgrut.model.lod_model import MixtureOfGaussiansWithAnchor
 from threedgrut.model.background import BackgroundColor
 from threedgrut_playground.tracer import Tracer
 from threedgrut_playground.utils.mesh_io import (
@@ -1053,26 +1054,29 @@ class Engine3DGRUT:
                 conf = compose(config_name=config_name)
             return conf
 
+        conf = load_default_config()
+        if conf.get("lod", False):
+            modelClass = MixtureOfGaussiansWithAnchor
+        else:
+            modelClass = MixtureOfGaussians
+
         if object_path.endswith('.pt'):
             checkpoint = torch.load(object_path)
             conf = checkpoint["config"]
             if conf.render['method'] != '3dgrt':
                 conf = load_default_config()
-            model = MixtureOfGaussians(conf)
+            model = modelClass(conf)
             model.init_from_checkpoint(checkpoint, setup_optimizer=False)
             object_name = conf.experiment_name
         elif object_path.endswith('.ingp'):
             conf = load_default_config()
-            model = MixtureOfGaussians(conf)
+            model = modelClass(conf)
             model.init_from_ingp(object_path, init_model=False)
             object_name = Path(object_path).stem
         elif object_path.endswith('.ply'):
             conf = load_default_config()
-            model = MixtureOfGaussians(conf)
-            if (conf.get('lod', False)):
-                model.init_from_ply_with_octree(object_path, init_model=False)
-            else:
-                model.init_from_ply(object_path, init_model=False)
+            model = modelClass(conf)
+            model.init_from_ply(object_path, init_model=False)
             object_name = Path(object_path).stem
         else:
             raise ValueError(f"Unknown object type: {object_path}")

@@ -243,7 +243,7 @@ class Tracer:
             if gaussians.progressive_training:
                 features *= gaussians.get_active_feature_mask()
 
-            mog_pos = gaussians.positions.contiguous()
+            mog_pos = gaussians.get_positions().contiguous()
             mog_dns = gaussians.get_density().contiguous()
             mog_rot = gaussians.get_rotation().contiguous()
             mog_scl = gaussians.get_scale().contiguous()
