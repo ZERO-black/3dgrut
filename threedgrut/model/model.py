@@ -411,6 +411,7 @@ class MixtureOfGaussians(torch.nn.Module):
         self.n_active_features = checkpoint["n_active_features"]
         self.max_n_features = checkpoint["max_n_features"]
         self.scene_extent = checkpoint["scene_extent"]
+        logger.info(f"# of gaussians: {self.num_gaussians}")
 
         if self.progressive_training:
             self.feature_dim_increase_interval = checkpoint["feature_dim_increase_interval"]
