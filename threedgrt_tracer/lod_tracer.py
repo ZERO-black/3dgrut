@@ -69,19 +69,6 @@ class LoDTracer(Tracer):
             min_transmittance,
             std_dist,
         ):
-            tensors = {
-                "mog_pos": mog_pos,
-                "mog_dns": mog_dns,
-                "mog_rot": mog_rot,
-                "mog_scl": mog_scl,
-                "zeros": torch.zeros_like(mog_dns, device="cuda"),
-            }
-
-            # for name, t in tensors.items():
-            #     print(
-            #         f"{name}: shape={tuple(t.shape)}, device={t.device}, dtype={t.dtype}"
-            #     )
-
             particle_density = torch.concat(
                 [
                     mog_pos,
@@ -175,6 +162,16 @@ class LoDTracer(Tracer):
                 ctx.sph_degree,
                 ctx.min_transmittance,
             )
+            ctx._saved_tensors = ()
+            ctx._saved_variables = ()
+            # 추가로 저장한 속성도 해제
+            ctx.tracer_wrapper = None
+            ctx.render_opts = None
+            ctx.sph_degree = None
+            ctx.min_transmittance = None
+            ctx.frame_id = None
+            print(torch.cuda.memory_summary(device="cuda", abbreviated=True))
+
             mog_pos_grd, mog_dns_grd, mog_rot_grd, mog_scl_grd, _ = torch.split(
                 particle_density_grd, [3, 1, 4, 3, 1], dim=1
             )

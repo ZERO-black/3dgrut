@@ -4,21 +4,32 @@
 defaults:
   - /base_octree
   - /dataset: nerf
-  - /initialization: random
+  - /initialization: initial_point_cloud
   - /render: 3dgrt
   - _self_
   
 # overwrite of default parameters
 val_frequency: 999999 # never validate
 lod: True
-n_iterations: 30000
+n_iterations: 40000
+
+strategy:
+  prune_scale:
+    frequency: 100
+    start_iteration: 2000
+    end_iteration: 25000
+    threshold: 0.9
+  densify:
+    large_mask: false
+  prune:
+    start_iteration: 2000
 
 export_ingp:
   enabled: False
 
-with_gui: True
+with_gui: False
 path: data/MatrixCity/pose/block_all
-out_dir: results/lod/city/0606/block_all
-experiment_name: octree-3dgrt-60000
+out_dir: results/lod/city/0616/block_all
+experiment_name: octree-3dgrt
 dataset:
   downsample_factor: 4
