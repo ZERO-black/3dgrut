@@ -759,3 +759,22 @@ class MixtureOfGaussians(torch.nn.Module):
             self.set_optimizable_parameters()
             self.setup_optimizer()
             self.validate_fields()
+
+    def init_from_initial_point_cloud(self, path, observer_pts):
+        plydata = PlyData.read(path)
+        v = plydata.elements[0]
+
+        fused_point_cloud = torch.tensor(
+            np.stack((v["x"], v["y"], v["z"]), axis=1), device=self.device
+        )
+
+        # fused_color = torch.tensor(
+        #     np.stack((v["red"], v["green"], v["blue"]), axis=1),
+        #     dtype=torch.uint8,
+        #     device=self.device,
+        # )
+        fused_color = torch.ones_like(fused_point_cloud, dtype=torch.uint8) * 255
+
+        return self.default_initialize_from_points(
+            fused_point_cloud, observer_pts, fused_color
+        )
