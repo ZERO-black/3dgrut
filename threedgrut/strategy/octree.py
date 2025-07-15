@@ -72,15 +72,15 @@ class OctreeStrategy(GSStrategy):
             self.prune_gaussians_opacity()
             scene_updated = True
 
-        # # Prune the Gaussians based on their scales
-        if check_step_condition(
-            step,
-            self.conf.strategy.prune_scale.start_iteration,
-            self.conf.strategy.prune_scale.end_iteration,
-            self.conf.strategy.prune_scale.frequency,
-        ):
-            self.prune_gaussians_scale(train_dataset)
-            scene_updated = True
+        # # # Prune the Gaussians based on their scales
+        # if check_step_condition(
+        #     step,
+        #     self.conf.strategy.prune_scale.start_iteration,
+        #     self.conf.strategy.prune_scale.end_iteration,
+        #     self.conf.strategy.prune_scale.frequency,
+        # ):
+        #     self.prune_gaussians_scale(train_dataset)
+        #     scene_updated = True
 
         # Decay the density values
         if check_step_condition(

@@ -289,11 +289,13 @@ class Trainer3DGRUT:
                     try:
                         ply_path = os.path.join(conf.path, "point_cloud.ply")
                         observer_points = torch.tensor(
-                            train_dataset.get_observer_points(),
+                            train_dataset.get_observer_points().copy(),
                             dtype=torch.float32,
                             device=self.device,
                         )
                         model.init_from_initial_point_cloud(ply_path, observer_points)
+                        del observer_points
+                        torch.cuda.empty_cache()
                     except FileNotFoundError as e:
                         logger.error(e)
                         raise e

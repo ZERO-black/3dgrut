@@ -170,7 +170,6 @@ class LoDTracer(Tracer):
             ctx.sph_degree = None
             ctx.min_transmittance = None
             ctx.frame_id = None
-            print(torch.cuda.memory_summary(device="cuda", abbreviated=True))
 
             mog_pos_grd, mog_dns_grd, mog_rot_grd, mog_scl_grd, _ = torch.split(
                 particle_density_grd, [3, 1, 4, 3, 1], dim=1

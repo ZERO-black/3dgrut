@@ -263,9 +263,10 @@ class MixtureOfGaussiansWithAnchor(MixtureOfGaussians):
 
         if self.visible_threshold < 0:
             self.visible_threshold = 0.0
-            self.pos, self.level, self.visible_threshold, _ = self.weed_out(
+            self.pos, self.level, self.visible_threshold, weed_mask = self.weed_out(
                 self.pos, self.level
             )
+            self.colors = self.colors[weed_mask]
         self.pos, self.level, _, weed_mask = self.weed_out(self.pos, self.level)
         self.colors = self.colors[weed_mask]
 
