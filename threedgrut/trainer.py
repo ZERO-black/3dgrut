@@ -43,6 +43,8 @@ from threedgrut.utils.logger import logger
 from threedgrut.utils.misc import check_step_condition, create_summary_writer, jet_map
 from threedgrut.utils.timer import CudaTimer
 
+# Erank
+import threedgrut.utils.erank as erank_utils
 
 class Trainer3DGRUT:
     """Trainer for paper: "3D Gaussian Ray Tracing: Fast Tracing of Particle Scenes" """
@@ -201,6 +203,11 @@ class Trainer3DGRUT:
 
                 self.strategy = MCMCStrategy(conf, self.model)
                 logger.info("🔆 Using MCMC strategy")
+            case "ErankStrategy":
+                from threedgrut.strategy.erank import ERankStrategy
+
+                self.strategy = ERankStrategy(conf, self.model)
+                logger.info("🔆 Using Erank strategy")
             case _:
                 raise ValueError(f"unrecognized model.strategy {conf.strategy.method}")
 
@@ -456,8 +463,29 @@ class Trainer3DGRUT:
                 loss_scale = torch.abs(self.model.get_scale()).mean()
                 lambda_scale = self.conf.loss.lambda_scale
 
+        scale = self.model.get_scale()
+        erank = erank_utils.get_effective_rank(scale)
+        ordered_scale_multiple, ordered_scale = erank_utils.get_ordered_scale_multiple(scale)
+
+        erank_from_iter = int(self.conf.loss.erank_from_iter)
+        erank_end_iter = int(self.conf.loss.erank_end_iter)
+
+        loss_erank = torch.zeros(1, device=self.device)
+        lambda_erank = 0.0
+        if self.conf.loss.use_erank and (erank_from_iter <= self.global_step <= erank_end_iter):
+            with torch.cuda.nvtx.range(f"loss-erank"):
+                loss_erank = torch.clamp(-torch.log(erank - 1 + 1e-7), 0).mean()
+                lambda_erank = self.conf.loss.lambda_erank
+            
+        loss_thin = torch.zeros(1, device=self.device)
+        lambda_thin = 0.0
+        if self.conf.loss.use_thin and (erank_from_iter <= self.global_step <= erank_end_iter):
+            with torch.cuda.nvtx.range(f"loss-thin"):
+                loss_thin = ordered_scale[:,2].mean()
+                lambda_thin = self.conf.loss.lambda_thin
+
         # Total loss
-        loss = lambda_l1 * loss_l1 + lambda_ssim * loss_ssim + lambda_opacity * loss_opacity + lambda_scale * loss_scale
+        loss = lambda_l1 * loss_l1 + lambda_ssim * loss_ssim + lambda_opacity * loss_opacity + lambda_scale * loss_scale + lambda_erank * loss_erank + lambda_thin * loss_thin
         return dict(
             total_loss=loss,
             l1_loss=lambda_l1 * loss_l1,
@@ -465,6 +493,8 @@ class Trainer3DGRUT:
             ssim_loss=lambda_ssim * loss_ssim,
             opacity_loss=lambda_opacity * loss_opacity,
             scale_loss=lambda_scale * loss_scale,
+            erank_loss=lambda_erank * loss_erank,
+            thin_loss=lambda_thin * loss_thin,
         )
 
     @torch.cuda.nvtx.range("log_validation_iter")
@@ -541,6 +571,12 @@ class Trainer3DGRUT:
         if self.conf.loss.use_ssim:
             ssim_loss = np.mean(metrics["losses"]["ssim_loss"])
             writer.add_scalar("loss/ssim/val", ssim_loss, global_step)
+        if self.conf.loss.use_erank:
+            erank_loss = np.mean(metrics["losses"]["erank_loss"])
+            writer.add_scalar("loss/erank/val", erank_loss, global_step)
+        if self.conf.loss.use_thin:
+            thin_loss = np.mean(metrics["losses"]["thin_loss"])
+            writer.add_scalar("loss/thin/val", thin_loss, global_step)
 
         table = {k: np.mean(v) for k, v in metrics.items() if k in ("psnr", "ssim", "lpips")}
         for time_key in mean_timings:
@@ -583,6 +619,12 @@ class Trainer3DGRUT:
             if self.conf.loss.use_scale:
                 scale_loss = np.mean(batch_metrics["losses"]["scale_loss"])
                 writer.add_scalar("loss/scale/train", scale_loss, global_step)
+            if self.conf.loss.use_erank:
+                erank_loss = np.mean(batch_metrics["losses"]["erank_loss"])
+                writer.add_scalar("loss/erank/train", erank_loss, global_step)
+            if self.conf.loss.use_thin:
+                thin_loss = np.mean(batch_metrics["losses"]["thin_loss"])
+                writer.add_scalar("loss/thin/train", thin_loss, global_step)
             if "psnr" in batch_metrics:
                 writer.add_scalar("psnr/train", batch_metrics["psnr"], self.global_step)
             if "ssim" in batch_metrics:
