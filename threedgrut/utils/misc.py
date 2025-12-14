@@ -22,6 +22,7 @@ import numpy.typing as npt
 import torch
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.tensorboard.writer import SummaryWriter
+from threedgrut.utils.logger import logger
 
 OmegaConf.register_new_resolver("div", lambda a, b: a / b)
 OmegaConf.register_new_resolver("eq", lambda a, b: a == b)
@@ -145,11 +146,12 @@ def create_summary_writer(conf, object_name, out_dir, experiment_name, use_wandb
     if use_wandb:
         import wandb
         config_obj = OmegaConf.to_container(DictConfig(conf))
+        logger.info(f"{object_name}, {conf.wandb_project}")
         config_obj["scene"] = object_name
         config_obj["method"] = conf.wandb_project
         wandb.login()
         wandb.init(
-            config=OmegaConf.to_container(DictConfig(conf)),
+            config=config_obj,
             project="mipnerf360",
             tags=[object_name],
             group=conf.wandb_project,

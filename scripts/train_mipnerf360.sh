@@ -10,8 +10,8 @@ if [[ -z $CONFIG ]]; then
     exit 1
 fi
 
-EXP_NAME="3dgrt_erank"
-VERSION="v1.2"
+EXP_NAME="ours_"
+VERSION="v1.3"
 
 RESULT_DIR=${RESULT_DIR:-"results/$VERSION"}
 EXTRA_ARGS=${@:2} # any extra arguments to pass to the script
@@ -25,8 +25,7 @@ EXTRA_ARGS=${@:2} # any extra arguments to pass to the script
 mkdir -p $RESULT_DIR
 export TORCH_EXTENSIONS_DIR=$RESULT_DIR/.cache
 
-# SCENE_LIST="bicycle bonsai counter flowers garden kitchen room stump treehill"
-SCENE_LIST="counter flowers garden kitchen room stump treehill bonsai"
+SCENE_LIST="bicycle bonsai counter flowers garden kitchen room stump treehill"
 
 for SCENE in $SCENE_LIST;
 do
@@ -44,7 +43,7 @@ do
         use_wandb=True with_gui=False out_dir=$RESULT_DIR \
         path=data/mipnerf360/$SCENE experiment_name=$SCENE \
         dataset.downsample_factor=$DATA_FACTOR \
-        wandb_project="$EXP_NAME_$VERSION" \
+        wandb_project=$EXP_NAME$VERSION \
         $EXTRA_ARGS >> $RESULT_DIR/train_$SCENE.log
 
 done
