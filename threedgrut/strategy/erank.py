@@ -62,12 +62,12 @@ class ERankStrategy(GSStrategy):
         g_z = g_z_scalar * z
         g_xy = params_grad[mask] - g_z
 
-        distance_to_camera = (self.model.positions[mask] - sensor_position).norm(dim=1, keepdim=True)
+        # distance_to_camera = (self.model.positions[mask] - sensor_position).norm(dim=1, keepdim=True)
 
         self.densify_grad_norm_accum[mask] += (
-            torch.norm(g_xy * distance_to_camera, dim=-1, keepdim=True) / self.projection_scale
+            torch.norm(g_xy, dim=-1, keepdim=True)
         )
-        z_norm = torch.norm(g_z * distance_to_camera, dim=-1, keepdim=True) / self.projection_scale
+        z_norm = torch.norm(g_z, dim=-1, keepdim=True)
 
         self.densify_grad_accum_abs[mask] += (z_norm)
         self.densify_grad_accum_abs_max[mask] = torch.max(z_norm, self.densify_grad_accum_abs_max[mask])
