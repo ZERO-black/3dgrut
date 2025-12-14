@@ -62,12 +62,12 @@ class ERankStrategy(GSStrategy):
         g_z = g_z_scalar * z
         g_xy = params_grad[mask] - g_z
 
-        # distance_to_camera = (self.model.positions[mask] - sensor_position).norm(dim=1, keepdim=True)
+        distance_to_camera = (self.model.positions[mask] - sensor_position).norm(dim=1, keepdim=True)
 
         self.densify_grad_norm_accum[mask] += (
-            torch.norm(g_xy, dim=-1, keepdim=True)
+            torch.norm(g_xy * distance_to_camera, dim=-1, keepdim=True) / self.projection_scale
         )
-        z_norm = torch.norm(g_z, dim=-1, keepdim=True)
+        z_norm = torch.norm(g_z * distance_to_camera, dim=-1, keepdim=True) / self.projection_scale
 
         self.densify_grad_accum_abs[mask] += (z_norm)
         self.densify_grad_accum_abs_max[mask] = torch.max(z_norm, self.densify_grad_accum_abs_max[mask])
@@ -140,10 +140,7 @@ class ERankStrategy(GSStrategy):
         # Here we already have the cloned points in the self.model.positions so only take the points up to size of the initial grad
         padded_grad[: grads.shape[0]] = grads.squeeze()
         padded_grad_abs[: grads_abs.shape[0]] = grads_abs.squeeze()
-        # mask = torch.where(padded_grad >= self.split_grad_threshold, True, False)
-        # mask = torch.logical_and(
-        #     mask, torch.max(self.model.get_scale(), dim=1).values > self.relative_size_threshold * scene_extent
-        # )
+
         mask = torch.where(padded_grad >= self.split_grad_threshold, True, False)
         mask_abs = torch.where(padded_grad_abs >= grads_abs_threshold, True, False)
         mask = torch.logical_or(mask, mask_abs)
