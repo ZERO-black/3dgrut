@@ -144,12 +144,15 @@ def create_summary_writer(conf, object_name, out_dir, experiment_name, use_wandb
 
     if use_wandb:
         import wandb
-
+        config_obj = OmegaConf.to_container(DictConfig(conf))
+        config_obj["scene"] = object_name
+        config_obj["method"] = conf.wandb_project
         wandb.login()
         wandb.init(
             config=OmegaConf.to_container(DictConfig(conf)),
-            project=conf.wandb_project,
-            group=experiment_name,
+            project="mipnerf360",
+            tags=[object_name],
+            group=conf.wandb_project,
             name=run_name,
         )
         wandb.tensorboard.patch(root_logdir=out_dir, save=False)
