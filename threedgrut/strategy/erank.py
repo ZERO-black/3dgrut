@@ -111,10 +111,9 @@ class ERankStrategy(GSStrategy):
             mask, torch.max(self.model.get_scale(), dim=1).values <= self.relative_size_threshold * scene_extent
         )
 
-        # TODO: sampling new gaussian -> split_gaussian 참고
         stds = self.model.get_scale()[mask]
         means = torch.zeros((stds.size(0), 3), device="cuda")
-        samples = torch.noraml(mean=means, std=stds)
+        samples = torch.normal(mean=means, std=stds)
         rots = quaternion_to_so3(self.model.rotation[mask])
         offsets = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1)
 

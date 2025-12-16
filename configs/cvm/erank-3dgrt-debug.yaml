@@ -8,3 +8,7 @@ n_iterations: 300
 wandb_project: "3dgrt_erank_debug"
 loss:
   erank_from_iter: 100
+
+strategy:
+  densify:
+    start_iteration: 10
