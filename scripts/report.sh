@@ -47,8 +47,8 @@ do
         dataset.downsample_factor=$DATA_FACTOR \
         render.primitive_type=instances \
         $EXTRA_ARGS >> $RESULT_DIR/train_$SCENE.log
-    python report_wandb.py --checkpoint $(find $RESULT_DIR/$SCENE -name ckpt_last.pt) --out-dir $RESULT_DIR/$SCENE/eval > $RESULT_DIR/render_$SCENE.log --scene $SCENE --method "3dgrt"
-    python report_erank.py --checkpoint $(find $RESULT_DIR/$SCENE -name ckpt_last.pt) --out-dir $RESULT_DIR/$SCENE/eval > $RESULT_DIR/render_$SCENE.log --scene $SCENE --method "3dgrt"
+    python report_wandb.py --checkpoint $(find $RESULT_DIR/$SCENE -name ckpt_last.pt) --out-dir $RESULT_DIR/$SCENE/eval --scene $SCENE --method "3dgrt"
+    python report_erank.py --checkpoint $(find $RESULT_DIR/$SCENE -name ckpt_last.pt) --out-dir $RESULT_DIR/$SCENE/eval --scene $SCENE --method "3dgrt"
 
 done
 
