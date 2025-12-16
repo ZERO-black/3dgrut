@@ -112,6 +112,12 @@ class ERankStrategy(GSStrategy):
         )
 
         # TODO: sampling new gaussian -> split_gaussian 참고
+        stds = self.model.get_scale()[mask]
+        means = torch.zeros((stds.size(0), 3), device="cuda")
+        samples = torch.noraml(mean=means, std=stds)
+        rots = quaternion_to_so3(self.model.rotation[mask])
+        offsets = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1)
+
 
         # stats
         if self.conf.strategy.print_stats:
@@ -120,7 +126,11 @@ class ERankStrategy(GSStrategy):
             logger.info(f"Cloned {n_clone} / {n_before} ({n_clone/n_before*100:.2f}%) gaussians")
 
         def update_param_fn(name: str, param: torch.Tensor) -> torch.Tensor:
-            param_new = torch.cat([param, param[mask]])
+            if name == "positions":
+                p_clone = param[mask] + offsets
+            else:
+                p_clone = param[mask]
+            param_new = torch.cat([param, p_clone])
             return torch.nn.Parameter(param_new, requires_grad=param.requires_grad)
 
         def update_optimizer_fn(key: str, v: torch.Tensor) -> torch.Tensor:
