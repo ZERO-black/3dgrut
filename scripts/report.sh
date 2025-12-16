@@ -18,26 +18,17 @@
 set -e
 
 
-CONFIG=$1
-if [[ -z $CONFIG ]]; then
-    echo "Error: Configuration is not provided. Aborting execution."
-    echo "Usage: $0 <config-yaml>"
+RESULT_DIR="results/mipnerf360-instances"
+if [[ -z $RESULT_DIR ]]; then
+    echo "Error: Result directory is not provided. Aborting execution."
+    echo "Usage: $0 <result-directory>"
     exit 1
 fi
 
-RESULT_DIR=${RESULT_DIR:-"results/mipnerf360"}
-EXTRA_ARGS=${@:2} # any extra arguments to pass to the script
-
-# # if the result directory already exists, warn user and aport execution
-# if [ -d "$RESULT_DIR" ]; then
-#     echo "Result directory $RESULT_DIR already exists. Aborting execution."
-#     exit 1
-# fi
-
-mkdir -p $RESULT_DIR
-export TORCH_EXTENSIONS_DIR=$RESULT_DIR/.cache
+CONFIG="paper/3dgrt/colmap_ours.yaml"
 
 SCENE_LIST="bicycle bonsai counter flowers garden kitchen room stump treehill"
+# SCENE_LIST="garden kitchen room treehill flowers"
 
 for SCENE in $SCENE_LIST;
 do
@@ -47,9 +38,8 @@ do
         DATA_FACTOR=4
     fi
 
-    echo "Running: $SCENE, Configuration: $CONFIG"
+    echo "Running $SCENE"
 
-    # train without eval
     nvidia-smi > $RESULT_DIR/train_$SCENE.log
     CUDA_VISIBLE_DEVICES=0 python train.py --config-name $CONFIG \
         use_wandb=True with_gui=False out_dir=$RESULT_DIR \
@@ -57,5 +47,10 @@ do
         dataset.downsample_factor=$DATA_FACTOR \
         render.primitive_type=instances \
         $EXTRA_ARGS >> $RESULT_DIR/train_$SCENE.log
+    python report_wandb.py --checkpoint $(find $RESULT_DIR/$SCENE -name ckpt_last.pt) --out-dir $RESULT_DIR/$SCENE/eval > $RESULT_DIR/render_$SCENE.log --scene $SCENE --method "3dgrt"
+    python report_erank.py --checkpoint $(find $RESULT_DIR/$SCENE -name ckpt_last.pt) --out-dir $RESULT_DIR/$SCENE/eval > $RESULT_DIR/render_$SCENE.log --scene $SCENE --method "3dgrt"
 
 done
+
+# To grep results from log files, run the following command:
+# grep "Test Metrics"        -A 5 train_*.log | awk 'NR % 7 == 5'

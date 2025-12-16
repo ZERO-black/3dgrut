@@ -27,6 +27,7 @@ import threedgrut.datasets as datasets
 from threedgrut.model.model import MixtureOfGaussians
 from threedgrut.utils.logger import logger
 from threedgrut.utils.misc import create_summary_writer
+import wandb
 
 
 class Renderer:
@@ -82,7 +83,7 @@ class Renderer:
         If model is None, it will be loaded base on the
         """
 
-        checkpoint = torch.load(checkpoint_path)
+        checkpoint = torch.load(checkpoint_path, weights_only=False)
         global_step = checkpoint["global_step"]
 
         conf = checkpoint["config"]
@@ -94,7 +95,9 @@ class Renderer:
 
         object_name = Path(conf.path).stem
         experiment_name = conf["experiment_name"]
-        writer, out_dir, run_name = create_summary_writer(conf, object_name, out_dir, experiment_name, use_wandb=False)
+        
+        if writer is None:
+            writer, out_dir, run_name = create_summary_writer(conf, object_name, out_dir, experiment_name, use_wandb=False)
 
         if model is None:
             # Initialize the model and the optix context
@@ -231,6 +234,9 @@ class Renderer:
 
             # Record the time
             inference_time.append(outputs["frame_time_ms"])
+            self.writer.add_scalar("psnr_all", psnr[-1], iteration)
+            self.writer.add_scalar("ssim_all", ssim[-1], iteration)
+            self.writer.add_scalar("lpips_all", lpips[-1], iteration)
 
             logger.log_progress(task_name="Rendering", advance=1, iteration=f"{str(iteration)}", psnr=psnr[-1])
 
@@ -255,10 +261,15 @@ class Renderer:
         logger.log_table(f"⭐ Test Metrics - Step {self.global_step}", record=table)
 
         if self.writer is not None:
-            self.writer.add_scalar("psnr/test", mean_psnr, self.global_step)
-            self.writer.add_scalar("ssim/test", mean_ssim, self.global_step)
-            self.writer.add_scalar("lpips/test", mean_lpips, self.global_step)
-            self.writer.add_scalar("time/inference/test", mean_inference_time, self.global_step)
+            # self.writer.add_scalar("psnr/test", mean_psnr, self.global_step)
+            # self.writer.add_scalar("ssim/test", mean_ssim, self.global_step)
+            # self.writer.add_scalar("lpips/test", mean_lpips, self.global_step)
+            # self.writer.add_scalar("time/inference/test", mean_inference_time, self.global_step)
+            wandb.run.summary["psnr"] = mean_psnr
+            wandb.run.summary["ssim"] = mean_ssim
+            wandb.run.summary["lpips"] = mean_lpips
+            wandb.run.summary["min_inference_time"] = mean_inference_time
+
 
             if len(test_images) > 0:
                 self.writer.add_images(
