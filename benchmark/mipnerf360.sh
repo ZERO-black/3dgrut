@@ -28,11 +28,11 @@ fi
 RESULT_DIR=${RESULT_DIR:-"results/mipnerf360"}
 EXTRA_ARGS=${@:2} # any extra arguments to pass to the script
 
-# if the result directory already exists, warn user and aport execution
-if [ -d "$RESULT_DIR" ]; then
-    echo "Result directory $RESULT_DIR already exists. Aborting execution."
-    exit 1
-fi
+# # if the result directory already exists, warn user and aport execution
+# if [ -d "$RESULT_DIR" ]; then
+#     echo "Result directory $RESULT_DIR already exists. Aborting execution."
+#     exit 1
+# fi
 
 mkdir -p $RESULT_DIR
 export TORCH_EXTENSIONS_DIR=$RESULT_DIR/.cache
@@ -52,9 +52,10 @@ do
     # train without eval
     nvidia-smi > $RESULT_DIR/train_$SCENE.log
     CUDA_VISIBLE_DEVICES=0 python train.py --config-name $CONFIG \
-        use_wandb=False with_gui=False out_dir=$RESULT_DIR \
+        use_wandb=True with_gui=False out_dir=$RESULT_DIR \
         path=data/mipnerf360/$SCENE experiment_name=$SCENE \
         dataset.downsample_factor=$DATA_FACTOR \
+        render.primitive_type=instances \
         $EXTRA_ARGS >> $RESULT_DIR/train_$SCENE.log
 
 done

@@ -20,34 +20,44 @@ set -e
 
 CONFIG=$1
 if [[ -z $CONFIG ]]; then
-    echo "Configuration is not provided. Aborting execution."
+    echo "Error: Configuration is not provided. Aborting execution."
     echo "Usage: $0 <config-yaml>"
     exit 1
 fi
 
-RESULT_DIR=${RESULT_DIR:-"results/scannetpp"}
+RESULT_DIR=${RESULT_DIR:-"results/mipnerf360"}
 EXTRA_ARGS=${@:2} # any extra arguments to pass to the script
 
-# if the result directory already exists, warn user and aport execution
-if [ -d "$RESULT_DIR" ]; then
-    echo "Result directory $RESULT_DIR already exists. Aborting execution."
-    exit 1
-fi
+# # if the result directory already exists, warn user and aport execution
+# if [ -d "$RESULT_DIR" ]; then
+#     echo "Result directory $RESULT_DIR already exists. Aborting execution."
+#     exit 1
+# fi
 
 mkdir -p $RESULT_DIR
 export TORCH_EXTENSIONS_DIR=$RESULT_DIR/.cache
-
-SCENE_LIST="0a5c013435 8d563fc2cc bb87c292ad d415cc449b e8ea9b4da8 fe1733741f"
+# SCENE_LIST="bicycle bonsai counter flowers garden kitchen room stump treehill"
+SCENE_LIST="stump treehill flowers"
 
 for SCENE in $SCENE_LIST;
 do
+    if [ "$SCENE" = "bonsai" ] || [ "$SCENE" = "counter" ] || [ "$SCENE" = "kitchen" ] || [ "$SCENE" = "room" ]; then
+        DATA_FACTOR=2
+    else
+        DATA_FACTOR=4
+    fi
+
     echo "Running: $SCENE, Configuration: $CONFIG"
 
     # train without eval
     nvidia-smi > $RESULT_DIR/train_$SCENE.log
     CUDA_VISIBLE_DEVICES=0 python train.py --config-name $CONFIG \
-        use_wandb=False with_gui=False out_dir=$RESULT_DIR \
-        path=data/scannetpp/$SCENE/dslr experiment_name=$SCENE \
+        use_wandb=True with_gui=False out_dir=$RESULT_DIR \
+        path=data/mipnerf360/$SCENE experiment_name=$SCENE \
+        dataset.downsample_factor=$DATA_FACTOR \
+        render.primitive_type=instances \
         $EXTRA_ARGS >> $RESULT_DIR/train_$SCENE.log
+    
+    python report_wandb.py --checkpoint $(find $RESULT_DIR/$SCENE -name ckpt_last.pt) --out-dir $RESULT_DIR/$SCENE/eval > $RESULT_DIR/render_$SCENE.log --scene $SCENE --method "3dgrt"
 
 done
