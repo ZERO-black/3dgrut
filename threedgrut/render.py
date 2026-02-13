@@ -82,7 +82,7 @@ class Renderer:
         If model is None, it will be loaded base on the
         """
 
-        checkpoint = torch.load(checkpoint_path)
+        checkpoint = torch.load(checkpoint_path, weights_only=False)
         global_step = checkpoint["global_step"]
 
         conf = checkpoint["config"]

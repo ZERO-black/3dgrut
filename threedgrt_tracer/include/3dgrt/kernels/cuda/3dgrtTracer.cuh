@@ -169,7 +169,7 @@ static __device__ __inline__ void traceVolumetricGS(
                     &rayTransmittance,
                     &rayData.hitDistance,
 #ifdef ENABLE_NORMALS
-                    true, &rayData->normal
+                    true, &rayData.normal
 #else
                     false, nullptr
 #endif

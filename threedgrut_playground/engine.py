@@ -1181,10 +1181,8 @@ class Engine3DGRUT:
             return conf
 
         if object_path.endswith(".pt"):
-            checkpoint = torch.load(object_path)
-            conf = checkpoint["config"]
-            if conf.render["method"] != "3dgrt":
-                conf = load_default_config()
+            checkpoint = torch.load(object_path, weights_only=False)
+            conf = load_default_config()
             model = MixtureOfGaussians(conf)
             model.init_from_checkpoint(checkpoint, setup_optimizer=False)
             object_name = conf.experiment_name
