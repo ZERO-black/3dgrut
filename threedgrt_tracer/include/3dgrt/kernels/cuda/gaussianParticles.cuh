@@ -349,10 +349,12 @@ __device__ inline bool processHit(
         particleRotation,
         particleDensity);
 
-    const float3 giscl   = make_float3(1 / particleScale.x, 1 / particleScale.y, 1 / particleScale.z);
-    const float3 gposc   = (rayOrigin - particlePosition);
+    const float3 giscl = make_float3(1 / particleScale.x, 1 / particleScale.y, 1 / particleScale.z); // S^-1
+
+    const float3 gposc   = (rayOrigin - particlePosition); // o - mu
     const float3 gposcr  = (gposc * particleRotation);
     const float3 gro     = giscl * gposcr;
+
     const float3 rayDirR = rayDirection * particleRotation;
     const float3 grdu    = giscl * rayDirR;
     const float3 grd     = safe_normalize(grdu);
@@ -379,15 +381,15 @@ __device__ inline bool processHit(
             &sphCoefficients[0]);
         const float3 grad = radianceFromSpH(sphEvalDegree, &sphCoefficients[0], rayDirection);
 
+        if (normal) {
+            const float3 hit_point_local = gro + dot(grd, -1 * gro) * grd;
+            const float3 grad_local      = giscl * hit_point_local;
+            *normal += particleDensity * (*transmittance) * safe_normalize(particleRotation * grad_local);
+        }
+
         *radiance += grad * weight;
         *transmittance *= (1 - galpha);
         *depth += hitT * weight;
-
-        if (normal) {
-            constexpr float ellispoidSqRadius = 9.0f;
-            const float3 particleScaleRotated = (particleRotation * particleScale);
-            *normal += weight * (SurfelPrimitive ? make_float3(0, 0, (grd.z > 0 ? 1 : -1) * particleScaleRotated.z) : safe_normalize((gro + grd * (dot(grd, -1 * gro) - sqrtf(ellispoidSqRadius - grayDist))) * particleScaleRotated));
-        }
     }
 
     return acceptHit;

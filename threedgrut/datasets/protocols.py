@@ -26,6 +26,7 @@ class Batch:
     rays_dir: torch.Tensor  # [B, H, W, 3] ray directions in arbitrary space
     T_to_world: torch.Tensor  # [B, 4, 4] transformation matrix from the ray space to the world space
     rgb_gt: Optional[torch.Tensor] = None
+    normal_gt: Optional[torch.Tensor] = None
     mask: Optional[torch.Tensor] = None
     intrinsics: Optional[list] = None
     intrinsics_OpenCVPinholeCameraModelParameters: Optional[dict] = None

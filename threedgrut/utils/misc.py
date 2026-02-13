@@ -148,8 +148,9 @@ def create_summary_writer(conf, object_name, out_dir, experiment_name, use_wandb
         wandb.login()
         wandb.init(
             config=OmegaConf.to_container(DictConfig(conf)),
-            project=conf.wandb_project,
-            group=experiment_name,
+            project="3dgrt-normal",
+            group=conf.wandb_project,
+            tags=[experiment_name],
             name=run_name,
         )
         wandb.tensorboard.patch(root_logdir=out_dir, save=False)

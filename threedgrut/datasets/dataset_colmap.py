@@ -45,8 +45,10 @@ from .utils import (
     read_colmap_intrinsics_text,
 )
 
+from threedgrut.datasets.normal_predictor import NormalPredictor
 
 class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
+
     def __init__(
         self,
         path,
@@ -55,6 +57,8 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
         downsample_factor=1,
         test_split_interval=8,
         ray_jitter=None,
+        enable_normals=False,
+        generate_normals=False,
     ):
         self.path = path
         self.device = device
@@ -62,6 +66,10 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
         self.downsample_factor = downsample_factor
         self.ray_jitter = ray_jitter
         self.test_split_interval = test_split_interval
+        self.enable_normals = enable_normals
+        self.generate_normal = generate_normals
+        if enable_normals:
+            self.normal_predictor = NormalPredictor(generate_normals)
 
         # Worker-based GPU cache for multiprocessing compatibility
         self._worker_gpu_cache = {}
@@ -236,6 +244,8 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
         self.poses = []
         self.image_paths = []
         self.mask_paths = []
+        if self.enable_normals:
+            self.normal_paths = []
 
         cam_centers = []
         for extr in logger.track(
@@ -258,6 +268,21 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
 
             # Mask path
             self.mask_paths.append(os.path.splitext(image_path)[0] + "_mask.png")
+
+            if not self.enable_normals:
+                continue
+
+            # get normal
+            normal_path = os.path.join(self.path, "normal", extr.name)
+            normal_path = os.path.splitext(normal_path)[0]
+            self.normal_paths.append(normal_path)
+
+            if not self.generate_normal:
+                continue
+
+            self.normal_predictor.predict_normal(
+                image_path, self.intrinsics[extr.camera_id][0], C2W, normal_path
+            )
 
         self.camera_centers = np.array(cam_centers)
         _, diagonal = get_center_and_diag(self.camera_centers)
@@ -345,6 +370,9 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
     def __getitem__(self, idx) -> dict:
         # Load image and get its actual dimensions
         image_data = np.asarray(Image.open(self.image_paths[idx]))
+        normal_data = np.asarray(
+            self.normal_predictor.load_normal(self.normal_paths[idx])
+        )
         actual_h, actual_w = image_data.shape[:2]
 
         # Use actual image dimensions for output shape
@@ -354,6 +382,7 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
 
         output_dict = {
             "data": torch.tensor(image_data).unsqueeze(0),
+            "normal": torch.tensor(normal_data).unsqueeze(0),
             "pose": torch.tensor(self.poses[idx]).unsqueeze(0),
             "intr": self.get_intrinsics_idx(idx),
         }
@@ -371,6 +400,7 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
         data = batch["data"][0].to(self.device, non_blocking=True) / 255.0
         pose = batch["pose"][0].to(self.device, non_blocking=True)
         intr = batch["intr"][0].item()
+        normal = batch["normal"][0].to(self.device, non_blocking=True)
 
         assert data.dtype == torch.float32
         assert pose.dtype == torch.float32
@@ -382,6 +412,7 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
 
         sample = {
             "rgb_gt": data,
+            "normal_gt": normal,
             "rays_ori": rays_ori,
             "rays_dir": rays_dir,
             "T_to_world": pose,

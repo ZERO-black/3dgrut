@@ -412,6 +412,12 @@ class Trainer3DGRUT:
         rgb_gt = gpu_batch.rgb_gt
         rgb_pred = outputs["pred_rgb"]
         mask = gpu_batch.mask
+        if self.conf.render.enable_normals:
+            normal_gt = gpu_batch.normal_gt
+            normal_pred = outputs["pred_normals"]
+            if mask is not None:
+                normal_gt = normal_gt * mask
+                normal_pred = normal_pred * mask
 
         # Mask out the invalid pixels if the mask is provided
         if mask is not None:
@@ -460,8 +466,30 @@ class Trainer3DGRUT:
                 loss_scale = torch.abs(self.model.get_scale()).mean()
                 lambda_scale = self.conf.loss.lambda_scale
 
+        loss_normal = torch.zeros(1, device=self.device)
+        lambda_normal = 0
+        if self.conf.render.enable_normals:
+            with torch.cuda.nvtx.range("loss-normal"):
+                # normal_pred = torch.nn.functional.normalize(normal_pred, dim=-1)
+                # normal_gt = torch.nn.functional.normalize(normal_gt, dim=-1)
+
+                # cos loss
+                # loss_normal = 1 - (normal_pred * normal_gt).sum(dim=-1)
+                # loss_normal = loss_normal.mean()
+
+                # l2 loss
+                loss_normal = ((normal_gt - normal_pred) ** 2).mean()
+
+            lambda_normal = self.conf.normal_loss_lambda
+
         # Total loss
-        loss = lambda_l1 * loss_l1 + lambda_ssim * loss_ssim + lambda_opacity * loss_opacity + lambda_scale * loss_scale
+        loss = (
+            lambda_l1 * loss_l1
+            + lambda_ssim * loss_ssim
+            + lambda_opacity * loss_opacity
+            + lambda_scale * loss_scale
+            + loss_normal * lambda_normal
+        )
         return dict(
             total_loss=loss,
             l1_loss=lambda_l1 * loss_l1,
@@ -469,6 +497,7 @@ class Trainer3DGRUT:
             ssim_loss=lambda_ssim * loss_ssim,
             opacity_loss=lambda_opacity * loss_opacity,
             scale_loss=lambda_scale * loss_scale,
+            normal_loss=lambda_normal * loss_normal,
         )
 
     @torch.cuda.nvtx.range("log_validation_iter")
@@ -545,7 +574,9 @@ class Trainer3DGRUT:
         if self.conf.loss.use_ssim:
             ssim_loss = np.mean(metrics["losses"]["ssim_loss"])
             writer.add_scalar("loss/ssim/val", ssim_loss, global_step)
-
+        if self.conf.render.enable_normals:
+            normal_loss = np.mean(metrics["losses"]["normal_loss"])
+            writer.add_scalar("loss/normal/val", normal_loss, global_step)
         table = {k: np.mean(v) for k, v in metrics.items() if k in ("psnr", "ssim", "lpips")}
         for time_key in mean_timings:
             table[time_key] = f"{'{:.2f}'.format(mean_timings[time_key])}" + " ms/it"
@@ -587,6 +618,9 @@ class Trainer3DGRUT:
             if self.conf.loss.use_scale:
                 scale_loss = np.mean(batch_metrics["losses"]["scale_loss"])
                 writer.add_scalar("loss/scale/train", scale_loss, global_step)
+            if self.conf.render.enable_normals:
+                normal_loss = np.mean(batch_metrics["losses"]["normal_loss"])
+                writer.add_scalar("loss/normal/train", normal_loss, global_step)
             if "psnr" in batch_metrics:
                 writer.add_scalar("psnr/train", batch_metrics["psnr"], self.global_step)
             if "ssim" in batch_metrics:
@@ -863,7 +897,6 @@ class Trainer3DGRUT:
                     self.render_gui_viser(scene_updated)
                 elif self.conf.with_gui:
                     self.render_gui(scene_updated)
-
         self.log_training_pass(metrics)
 
     @torch.cuda.nvtx.range(f"run_validation_pass")

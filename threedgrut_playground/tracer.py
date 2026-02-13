@@ -135,7 +135,7 @@ class Tracer:
             "pred_rgb": pred_rgb,
             "pred_opacity": pred_opacity,
             "pred_dist": pred_dist,
-            "pred_normals": torch.nn.functional.normalize(pred_normals, dim=3),
+            "pred_normals": pred_normals,
             "hits_count": hits_count,
         }
 

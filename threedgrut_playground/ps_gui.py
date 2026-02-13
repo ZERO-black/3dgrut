@@ -27,7 +27,7 @@ import torch
 
 from threedgrut.gui.ps_extension import initialize_cugl_interop
 from threedgrut.utils.logger import logger
-from threedgrut_playground.engine import Engine3DGRUT, OptixPrimitiveTypes
+from threedgrut_playground.engine import Engine3DGRUT, OptixPrimitiveTypes, RenderOptions
 from threedgrut_playground.utils.kaolin_future.conversions import (
     polyscope_from_kaolin_camera,
     polyscope_to_kaolin_camera,
@@ -1057,6 +1057,20 @@ class Playground:
         psim.PopItemWidth()
         return is_not_removed
 
+    def _draw_rendering_options_widget(self):
+        psim.SetNextItemOpen(True, psim.ImGuiCond_FirstUseEver)
+        if psim.TreeNode("Rendering Options"):
+            available_options = [RenderOptions.RADIANCE, RenderOptions.DEPTH, RenderOptions.NORMAL]
+            current_option_idx = available_options.index(self.engine.render_option)
+
+            options_changed, new_option_idx = psim.Combo("Rendering Options", current_option_idx, available_options)
+
+            if options_changed:
+                self.engine.render_option = available_options[new_option_idx]
+                self.is_force_canvas_dirty = True
+
+            psim.TreePop()
+
     @torch.cuda.nvtx.range("ps_ui_callback")
     def ps_ui_callback(self):
         """Polyscope custom UI callback - used to draw gui menu"""
@@ -1077,6 +1091,8 @@ class Playground:
         self._draw_materials_widget()
         psim.Separator()
         self._draw_primitives_widget()
+        psim.Separator()
+        self._draw_rendering_options_widget()
 
         # Finally refresh the canvas by rendering the next pass, if needed
         if self.live_update:

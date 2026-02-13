@@ -22,6 +22,7 @@ import torch.utils.cpp_extension
 
 from threedgrut.datasets.protocols import Batch
 from threedgrut.utils.timer import CudaTimer
+from threedgrut_playground.utils.misc import color_normal
 
 logger = logging.getLogger(__name__)
 
@@ -250,8 +251,10 @@ class Tracer:
             "pred_rgb": pred_rgb,
             "pred_opacity": pred_opacity,
             "pred_dist": pred_dist,
-            "pred_normals": torch.nn.functional.normalize(pred_normals, dim=3),
+            "pred_normals": color_normal(pred_normals),
             "hits_count": hits_count,
-            "frame_time_ms": self.frame_timer.timing() if self.frame_timer is not None else 0.0,
+            "frame_time_ms": (
+                self.frame_timer.timing() if self.frame_timer is not None else 0.0
+            ),
             "mog_visibility": mog_visibility,
         }

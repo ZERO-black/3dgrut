@@ -18,7 +18,7 @@ from __future__ import annotations
 import copy
 import os
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -47,6 +47,7 @@ from threedgrut_playground.utils.mesh_io import (
 )
 from threedgrut_playground.utils.spp import SPP
 from threedgrut_playground.utils.video_out import VideoRecorder
+from threedgrut_playground.utils.misc import visualize_depth_t_minmax_rgb
 
 #################################
 ##       --- Common ---        ##
@@ -724,6 +725,12 @@ class Primitives:
 #################################
 
 
+class RenderOptions(StrEnum):
+    RADIANCE = "Radiance"
+    DEPTH = "Depth"
+    NORMAL = "Normal"
+
+
 class Engine3DGRUT:
     """An interface to the core functionality of rendering pretrained 3DGRUT scenes with secondary ray effects &
     mesh primitives. This engine supports loading pretrained scenes from:
@@ -831,7 +838,7 @@ class Engine3DGRUT:
         """ Component managing the depth of field settings in the scene """
         self.depth_of_field = DepthOfField(aperture_size=0.01, focus_z=1.0)
         """ Toggles antialiasing on / off """
-        self.use_spp = True
+        self.use_spp = False
         """ Currently set antialiasing mode """
         self.antialiasing_mode = "4x MSAA"
         """ Component managing the antialiasing settings in the scene """
@@ -841,7 +848,7 @@ class Engine3DGRUT:
         """ Maximum number of PBR material bounces (transmissions & refractions, reflections) """
         self.max_pbr_bounces = 15
         """ If enabled, will use the optix denoiser as post-processing """
-        self.use_optix_denoiser = True
+        self.use_optix_denoiser = False
         """ Enables / disables gaussian rendering """
         self.disable_gaussian_tracing = False
 
@@ -849,9 +856,9 @@ class Engine3DGRUT:
         self.primitives = Primitives(
             tracer=self.tracer, mesh_assets_folder=mesh_assets_folder, scene_scale=scene_scale, device=self.device
         )
-        self.primitives.add_primitive(
-            geometry_type="Sphere", primitive_type=OptixPrimitiveTypes.GLASS, device=self.device
-        )
+        # self.primitives.add_primitive(
+        #     geometry_type="Sphere", primitive_type=OptixPrimitiveTypes.GLASS, device=self.device
+        # )
         self.rebuild_bvh(self.scene_mog)
 
         self.last_state = dict(camera=None, rgb=None, opacity=None)
@@ -861,6 +868,8 @@ class Engine3DGRUT:
         """ When this flag is toggled on, the state of the materials have changed they need to be re-uploaded to device
         """
         self.is_materials_dirty = False
+
+        self.render_option = RenderOptions.NORMAL
 
     def _accumulate_to_buffer(self, prev_frames, new_frame, num_frames_accumulated, gamma, batch_size=1):
         """Accumulate a new frame to the buffer, using the previous frames and the current frame."""
@@ -889,8 +898,15 @@ class Engine3DGRUT:
                     dof_rb = self.scene_mog.trace(rays_o=dof_rays_ori, rays_d=dof_rays_dir)
             else:
                 dof_rb = self._render_playground_hybrid(dof_rays_ori, dof_rays_dir)
-
-            rb["rgb"] = self._accumulate_to_buffer(rb["rgb"], dof_rb["pred_rgb"], i, self.gamma_correction)
+            if self.render_option == RenderOptions.RADIANCE:
+                keyStr = "pred_rgb"
+            elif self.render_option == RenderOptions.DEPTH:
+                keyStr = "pred_dist"
+            else:
+                keyStr = "pred_normals"
+            rb["rgb"] = self._accumulate_to_buffer(
+                rb["rgb"], dof_rb[keyStr], i, self.gamma_correction
+            )
             rb["opacity"] = (rb["opacity"] * i + dof_rb["pred_opacity"]) / (i + 1)
 
     def _render_spp_buffer(self, rb, rays):
@@ -909,9 +925,23 @@ class Engine3DGRUT:
                     spp_rb = self.scene_mog.trace(rays_o=rays.rays_ori, rays_d=rays.rays_dir)
             else:
                 spp_rb = self._render_playground_hybrid(rays.rays_ori, rays.rays_dir)
-            batch_rgb = spp_rb["pred_rgb"].sum(dim=0).unsqueeze(0)
+
+            if self.render_option == RenderOptions.RADIANCE:
+                keyStr = "pred_rgb"
+            elif self.render_option == RenderOptions.DEPTH:
+                keyStr = "pred_dist"
+            else:
+                keyStr = "pred_normals"
+            batch = spp_rb[keyStr].sum(dim=0).unsqueeze(0)
+
+            # if (self.render_option == RenderOptions.DEPTH):
+            #     batch = visualize_depth_t_minmax_rgb(batch)
             rb["rgb"] = self._accumulate_to_buffer(
-                rb["rgb"], batch_rgb, i, self.gamma_correction, batch_size=self.spp.batch_size
+                rb["rgb"],
+                batch,
+                i,
+                self.gamma_correction,
+                batch_size=self.spp.batch_size,
             )
             rb["opacity"] = (rb["opacity"] * i + spp_rb["pred_opacity"]) / (i + self.spp.batch_size)
 
@@ -1072,8 +1102,14 @@ class Engine3DGRUT:
                     rb = self.scene_mog.trace(rays_o=rays.rays_ori, rays_d=rays.rays_dir)
             else:
                 rb = self._render_playground_hybrid(rays.rays_ori, rays.rays_dir)
+            if self.render_option == RenderOptions.RADIANCE:
+                rgb = rb["pred_rgb"]
+            elif self.render_option == RenderOptions.DEPTH:
+                rgb = visualize_depth_t_minmax_rgb(rb["pred_dist"])
+            else:
+                rgb = rb["pred_normals"]
 
-            rb = dict(rgb=rb["pred_rgb"], opacity=rb["pred_opacity"])
+            rb = dict(rgb=rgb, opacity=rb["pred_opacity"])
             rb["rgb"] = self.environment.tonemap(rb["rgb"])
             rb["rgb"] = torch.pow(rb["rgb"], 1.0 / self.gamma_correction)
             rb["rgb"] = rb["rgb"].mean(dim=0).unsqueeze(0)
