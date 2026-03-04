@@ -2,6 +2,7 @@ import torch
 
 
 def color_normal(normal):
+    normal = torch.nn.functional.normalize(normal, dim=-1)
     image = (normal + 1.0) / 2.0
     return image.clamp(0.0, 1.0)
 

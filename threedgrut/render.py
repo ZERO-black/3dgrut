@@ -27,6 +27,8 @@ import threedgrut.datasets as datasets
 from threedgrut.model.model import MixtureOfGaussians
 from threedgrut.utils.logger import logger
 from threedgrut.utils.misc import create_summary_writer
+from omegaconf import OmegaConf
+from threedgrut_playground.utils.misc import color_normal
 
 
 class Renderer:
@@ -86,11 +88,15 @@ class Renderer:
         global_step = checkpoint["global_step"]
 
         conf = checkpoint["config"]
+        OmegaConf.set_struct(conf, False)
+        conf.generate_normals = False
+
         # overrides
         if conf["render"]["method"] == "3dgrt":
             conf["render"]["particle_kernel_density_clamping"] = True
             conf["render"]["min_transmittance"] = 0.03
         conf["render"]["enable_kernel_timings"] = True
+        conf["render"]["enable_normals"] = True
 
         object_name = Path(conf.path).stem
         experiment_name = conf["experiment_name"]
@@ -149,7 +155,11 @@ class Renderer:
             }
 
         output_path_renders = os.path.join(self.out_dir, f"ours_{int(self.global_step)}", "renders")
+        normal_path_renders = os.path.join(self.out_dir, f"normals", "renders")
+        normal_path_gt = os.path.join(self.out_dir, f"normals", "gt")
         os.makedirs(output_path_renders, exist_ok=True)
+        os.makedirs(normal_path_renders, exist_ok=True)
+        os.makedirs(normal_path_gt, exist_ok=True)
 
         if self.save_gt:
             output_path_gt = os.path.join(self.out_dir, f"ours_{int(self.global_step)}", "gt")
@@ -183,11 +193,20 @@ class Renderer:
             pred_rgb_full = outputs["pred_rgb"]
             rgb_gt_full = gpu_batch.rgb_gt
 
+            pred_normal_full = color_normal(outputs["pred_normals"])
+
+            normal_gt_full = gpu_batch.normal_gt
+
             # The values are already alpha composited with the background
             torchvision.utils.save_image(
                 pred_rgb_full.squeeze(0).permute(2, 0, 1),
                 os.path.join(output_path_renders, "{0:05d}".format(iteration) + ".png"),
             )
+            torchvision.utils.save_image(
+                pred_normal_full.squeeze(0).permute(2, 0, 1),
+                os.path.join(normal_path_renders, "{0:05d}".format(iteration) + ".png"),
+            )
+
             pred_img_to_write = pred_rgb_full[-1].clip(0, 1.0)
             gt_img_to_write = rgb_gt_full[-1].clip(0, 1.0)
 
@@ -199,7 +218,11 @@ class Renderer:
                     rgb_gt_full.squeeze(0).permute(2, 0, 1),
                     os.path.join(output_path_gt, "{0:05d}".format(iteration) + ".png"),
                 )
-
+                normal_gt_full = color_normal(normal_gt_full)
+                torchvision.utils.save_image(
+                    normal_gt_full.squeeze(0).permute(2, 0, 1),
+                    os.path.join(normal_path_gt, "{0:05d}".format(iteration) + ".png"),
+                )
             # Compute the loss
             psnr_single_img = criterions["psnr"](outputs["pred_rgb"], gpu_batch.rgb_gt).item()
             psnr.append(psnr_single_img)  # evaluation on valid rays only

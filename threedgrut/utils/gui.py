@@ -26,6 +26,7 @@ from threedgrut.datasets.utils import DEFAULT_DEVICE, fov2focal
 from threedgrut.utils.logger import logger
 from threedgrut.utils.misc import to_np
 from threedgrut.utils.timer import CudaTimer
+from threedgrut_playground.utils.misc import color_normal
 
 trajectory = []
 
@@ -319,7 +320,7 @@ class GUI:
 
         elif style == "normals":
             # scale in rendering space
-            sple_onrm = 0.5 * (sple_onrm + 1)
+            sple_onrm = color_normal(sple_onrm)
             # append 1s for alpha
             sple_onrm = torch.cat((sple_onrm, torch.ones_like(sple_onrm[:, :, :, 0:1])), dim=-1)
             if self.update_from_device:

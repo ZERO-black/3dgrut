@@ -5,7 +5,8 @@ defaults:
   - _self_
 
 generate_normals: false
-normal_loss_lambda: 0.01
+normal_loss_lambda: 0.1
+normal_loss_start_iteration: 15000
 
 render:
   primitive_type: instances
@@ -13,7 +14,7 @@ render:
 
 loss:
   use_l1: true
-  lambda_l1: 0.79
+  lambda_l1: 0.8
   
   use_l2: false
   lambda_l2: 1.0
@@ -30,6 +31,11 @@ loss:
 export_ingp:
   enabled: false
 
+# strategy:
+#   densify:
+#     start_iteration: 40000
+#   prune:
+#     start_iteration: 50000
 
 
 optimizer:

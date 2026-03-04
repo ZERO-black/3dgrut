@@ -48,6 +48,8 @@ from threedgrut_playground.utils.mesh_io import (
 from threedgrut_playground.utils.spp import SPP
 from threedgrut_playground.utils.video_out import VideoRecorder
 from threedgrut_playground.utils.misc import visualize_depth_t_minmax_rgb
+from threedgrut_playground.utils.misc import color_normal
+
 
 #################################
 ##       --- Common ---        ##
@@ -899,13 +901,13 @@ class Engine3DGRUT:
             else:
                 dof_rb = self._render_playground_hybrid(dof_rays_ori, dof_rays_dir)
             if self.render_option == RenderOptions.RADIANCE:
-                keyStr = "pred_rgb"
+                next_frame = dof_rb["pred_rgb"]
             elif self.render_option == RenderOptions.DEPTH:
-                keyStr = "pred_dist"
+                next_frame = dof_rb["pred_dist"]
             else:
-                keyStr = "pred_normals"
+                next_frame = color_normal(dof_rb["pred_normals"])
             rb["rgb"] = self._accumulate_to_buffer(
-                rb["rgb"], dof_rb[keyStr], i, self.gamma_correction
+                rb["rgb"], next_frame, i, self.gamma_correction
             )
             rb["opacity"] = (rb["opacity"] * i + dof_rb["pred_opacity"]) / (i + 1)
 
@@ -927,12 +929,12 @@ class Engine3DGRUT:
                 spp_rb = self._render_playground_hybrid(rays.rays_ori, rays.rays_dir)
 
             if self.render_option == RenderOptions.RADIANCE:
-                keyStr = "pred_rgb"
+                buffer = spp_rb["pred_rgb"]
             elif self.render_option == RenderOptions.DEPTH:
-                keyStr = "pred_dist"
+                buffer = spp_rb["pred_dist"]
             else:
-                keyStr = "pred_normals"
-            batch = spp_rb[keyStr].sum(dim=0).unsqueeze(0)
+                buffer = color_normal(spp_rb["pred_normals"])
+            batch = buffer.sum(dim=0).unsqueeze(0)
 
             # if (self.render_option == RenderOptions.DEPTH):
             #     batch = visualize_depth_t_minmax_rgb(batch)

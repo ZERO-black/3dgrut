@@ -382,9 +382,9 @@ __device__ inline bool processHit(
         const float3 grad = radianceFromSpH(sphEvalDegree, &sphCoefficients[0], rayDirection);
 
         if (normal) {
-            const float3 hit_point_local = gro + dot(grd, -1 * gro) * grd;
-            const float3 grad_local      = giscl * hit_point_local;
-            *normal += particleDensity * (*transmittance) * safe_normalize(particleRotation * grad_local);
+            const float3 hit_point_local = gro + dot(grd, -gro) * grd;
+            const float3 gnrmscl         = giscl * hit_point_local;
+            *normal += weight * safe_normalize(particleRotation * gnrmscl);
         }
 
         *radiance += grad * weight;
@@ -476,12 +476,19 @@ __device__ inline void processHitBwd(
     float3 radianceGrad,
     float integratedDepth,
     float& depth,
-    float depthGrad) {
+    float depthGrad,
+    float3 integratedNormal, float3* normal, float3 normalGrad) {
     float3 particlePosition;
     float3 gscl;
     float33 particleRotation;
     float particleDensity;
     float4 grot;
+
+    // constexpr float epsT = 1e-9;
+
+    // if (fabs(radianceGrad.x) >= epsT || fabs(radianceGrad.y) >= epsT || fabs(radianceGrad.z) >= epsT) {
+    //     printf("%.10f %.10f %.10f\n", radianceGrad.x, radianceGrad.y, radianceGrad.z);
+    // }
 
     {
         const ParticleDensity particleData = particleDensityPtr[particleIdx];
@@ -568,6 +575,31 @@ __device__ inline void processHitBwd(
         radiance += rayRad;
         const float3 residualRayRad = maxf3((nextTransmit <= minTransmittance ? make_float3(0) : (integratedRadiance - radiance) / nextTransmit),
                                             make_float3(0));
+        const float galphaRadianceGrd = transmittance * ((grad.x - residualRayRad.x) * radianceGrad.x + (grad.y - residualRayRad.y) * radianceGrad.y + (grad.z - residualRayRad.z) * radianceGrad.z);
+#ifdef ENABLE_NORMALS
+        // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        // compute the gradient wrt to the normal
+        const float3 hit_point_local = gro + dot(grd, -gro) * grd;
+        const float3 gnrmscl         = giscl * hit_point_local;
+        const float3 gnrmsclru       = particleRotation * gnrmscl;
+        const float3 rayNorm         = weight * safe_normalize(gnrmsclru);
+
+        *normal += rayNorm;
+        const float3 residualRayNrm = nextTransmit <= minTransmittance ? make_float3(0) : (integratedNormal - *normal) / nextTransmit;
+
+        const float galphaNormalGrd = transmittance * dot((safe_normalize(gnrmsclru) - residualRayNrm), normalGrad);
+        const float3 nGrd           = weight * normalGrad;
+        const float3 gnrmsclrGrd    = safe_normalize_bw(gnrmsclru, nGrd);
+        const float3 gnrmsclGrd     = matmul_bw_vec(particleRotation, gnrmsclrGrd);
+        const float3 hitGrad        = gnrmsclGrd * giscl;
+
+// const float3 hit_point_local
+// compute total loss gradient wrt alpha
+#else
+        const float galphaNormalGrd = 0;
+#endif
+        const float galphaGrd = galphaRayHitGrd + galphaRayDnsGrd + galphaRadianceGrd + galphaNormalGrd;
+        // printf("%.10f %.10f %.10f %.10f\n", galphaRayHitGrd, galphaRayDnsGrd, galphaRadianceGrd, galphaNormalGrd);
 
         // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
         // ---> rayDns = 1 - prevTrm * (1-galpha) * nextTrm
@@ -579,11 +611,8 @@ __device__ inline void processHitBwd(
         //                  = accumulatedRayRad + gdns * gres * transmit * grad + (1-gdns*gres) *
         //                  transmit * residualRayRad
         // ===> d_rayRad / d_gdns = gres * transmit * grad - gres * transmit * residualRayRad
-        atomicAdd(
-            &particleDensityGrad.density,
-            gres * (galphaRayHitGrd + galphaRayDnsGrd + transmittance * (grad.x - residualRayRad.x) * radianceGrad.x +
-                    transmittance * (grad.y - residualRayRad.y) * radianceGrad.y +
-                    transmittance * (grad.z - residualRayRad.z) * radianceGrad.z));
+
+        atomicAdd(&particleDensityGrad.density, gres * galphaGrd);
 
         // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
         // ---> rayDns = 1 - prevTrm * (1-galpha) * nextTrm
@@ -595,10 +624,7 @@ __device__ inline void processHitBwd(
         //                  = accumulatedRayRad + gdns * gres * transmit * grad + (1 - gdns * gres) *
         //                  transmit * residualRayRad
         // ===> d_rayRad / d_gres = gdns * transmit * grad - gdns * transmit * residualRayRad
-        const float gresGrd =
-            particleDensity * (galphaRayHitGrd + galphaRayDnsGrd + transmittance * (grad.x - residualRayRad.x) * radianceGrad.x +
-                               transmittance * (grad.y - residualRayRad.y) * radianceGrad.y +
-                               transmittance * (grad.z - residualRayRad.z) * radianceGrad.z);
+        const float gresGrd = particleDensity * galphaGrd;
 
         // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
         // ---> gres = exp(-0.0555 * grayDist * grayDist)
@@ -607,6 +633,8 @@ __device__ inline void processHitBwd(
         const float grayDistGrd = particleResponseGrd<PARTICLE_KERNEL_DEGREE>(grayDist, gres, gresGrd);
 
         float3 grdGrd, groGrd;
+        float3 normalGrdGrd, normalGroGrd;
+
         if (SurfelPrimitive) {
             const float3 surfelNm    = make_float3(0, 0, 1);
             const float doSurfelGro  = dot(surfelNm, gro);
@@ -653,12 +681,20 @@ __device__ inline void processHitBwd(
             // ---> gcrod.x = grd.y * gro.z - grd.z * gro.y
             // ---> gcrod.y = grd.z * gro.x - grd.x * gro.z
             // ---> gcrod.z = grd.x * gro.y - grd.y * gro.x
-            grdGrd = make_float3(gcrodGrd.z * gro.y - gcrodGrd.y * gro.z,
-                                 gcrodGrd.x * gro.z - gcrodGrd.z * gro.x,
-                                 gcrodGrd.y * gro.x - gcrodGrd.x * gro.y);
-            groGrd = make_float3(gcrodGrd.y * grd.z - gcrodGrd.z * grd.y,
-                                 gcrodGrd.z * grd.x - gcrodGrd.x * grd.z,
-                                 gcrodGrd.x * grd.y - gcrodGrd.y * grd.x);
+#ifdef ENABLE_NORMALS
+            normalGroGrd = hitGrad - dot(hitGrad, grd) * grd;
+            normalGrdGrd = hitGrad * dot(grd, -gro) - dot(hitGrad, grd) * gro;
+
+#else
+            normalGroGrd = make_float3(0);
+            normalGrdGrd = make_float3(0);
+#endif
+            grdGrd = normalGrdGrd + make_float3(gcrodGrd.z * gro.y - gcrodGrd.y * gro.z,
+                                                gcrodGrd.x * gro.z - gcrodGrd.z * gro.x,
+                                                gcrodGrd.y * gro.x - gcrodGrd.x * gro.y);
+            groGrd = normalGroGrd + make_float3(gcrodGrd.y * grd.z - gcrodGrd.z * grd.y,
+                                                gcrodGrd.z * grd.x - gcrodGrd.x * grd.z,
+                                                gcrodGrd.x * grd.y - gcrodGrd.y * grd.x);
         }
 
         // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -695,19 +731,33 @@ __device__ inline void processHitBwd(
         // ---> grdu = (1/gscl)*rayDirR
         // ===> d_grdu / d_gscl = -rayDirR/(gscl*gscl)
         // ===> d_grdu / d_rayDirR = (1/gscl)
-        atomicAdd(&particleDensityGrad.scale.x, gsclRayHitGrd.x + gsclGrdGro.x + (-rayDirR.x / (gscl.x * gscl.x)) * grduGrd.x);
-        atomicAdd(&particleDensityGrad.scale.y, gsclRayHitGrd.y + gsclGrdGro.y + (-rayDirR.y / (gscl.y * gscl.y)) * grduGrd.y);
-        atomicAdd(&particleDensityGrad.scale.z, gsclRayHitGrd.z + gsclGrdGro.z + (-rayDirR.z / (gscl.z * gscl.z)) * grduGrd.z);
+#ifdef ENABLE_NORMALS
+        const float3 normalSclGrd = -(hit_point_local * gnrmsclGrd) / (gscl * gscl);
+#else
+        const float3 normalSclGrd = make_float3(0);
+#endif
+        const float3 rayMogSclGrd = gsclRayHitGrd + gsclGrdGro + -(rayDirR / (gscl * gscl)) * grduGrd + normalSclGrd;
+        atomicAdd(&particleDensityGrad.scale.x, rayMogSclGrd.x);
+        atomicAdd(&particleDensityGrad.scale.y, rayMogSclGrd.y);
+        atomicAdd(&particleDensityGrad.scale.z, rayMogSclGrd.z);
         const float3 rayDirRGrd = giscl * grduGrd;
 
         // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
         // ---> rayDirR = matmul(rayDir, grotMat)
         // ===> d_rayDirR / d_grotmat = matmul_bw_mat(rayDir, grotMat)
         const float4 grotGrdRayDirR = matmul_bw_quat(rayDirection, rayDirRGrd, grot);
-        atomicAdd(&particleDensityGrad.quaternion.x, grotGrdPoscr.x + grotGrdRayDirR.x);
-        atomicAdd(&particleDensityGrad.quaternion.y, grotGrdPoscr.y + grotGrdRayDirR.y);
-        atomicAdd(&particleDensityGrad.quaternion.z, grotGrdPoscr.z + grotGrdRayDirR.z);
-        atomicAdd(&particleDensityGrad.quaternion.w, grotGrdPoscr.w + grotGrdRayDirR.w);
+
+#ifdef ENABLE_NORMALS
+        const float4 normalRotGrd = matmul_bw_quat(gnrmscl, gnrmsclrGrd, grot);
+#else
+        const float4 normalRotGrd = make_float4(0);
+#endif
+
+        const float4 rayMogRotGrd = grotGrdPoscr + grotGrdRayDirR + normalRotGrd;
+        atomicAdd(&particleDensityGrad.quaternion.x, rayMogRotGrd.x);
+        atomicAdd(&particleDensityGrad.quaternion.y, rayMogRotGrd.y);
+        atomicAdd(&particleDensityGrad.quaternion.z, rayMogRotGrd.z);
+        atomicAdd(&particleDensityGrad.quaternion.w, rayMogRotGrd.w);
 
         transmittance = nextTransmit;
     }

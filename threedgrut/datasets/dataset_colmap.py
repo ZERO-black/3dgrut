@@ -244,8 +244,6 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
         self.poses = []
         self.image_paths = []
         self.mask_paths = []
-        if self.enable_normals:
-            self.normal_paths = []
 
         cam_centers = []
         for extr in logger.track(
@@ -275,7 +273,6 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
             # get normal
             normal_path = os.path.join(self.path, "normal", extr.name)
             normal_path = os.path.splitext(normal_path)[0]
-            self.normal_paths.append(normal_path)
 
             if not self.generate_normal:
                 continue
@@ -370,9 +367,6 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
     def __getitem__(self, idx) -> dict:
         # Load image and get its actual dimensions
         image_data = np.asarray(Image.open(self.image_paths[idx]))
-        normal_data = np.asarray(
-            self.normal_predictor.load_normal(self.normal_paths[idx])
-        )
         actual_h, actual_w = image_data.shape[:2]
 
         # Use actual image dimensions for output shape
@@ -382,10 +376,16 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
 
         output_dict = {
             "data": torch.tensor(image_data).unsqueeze(0),
-            "normal": torch.tensor(normal_data).unsqueeze(0),
             "pose": torch.tensor(self.poses[idx]).unsqueeze(0),
             "intr": self.get_intrinsics_idx(idx),
         }
+
+        if self.enable_normals:
+            normal_path = os.path.join(
+                self.path, "normal", self.image_paths[idx].split(".")[-2].split("/")[-1]
+            )
+            normal_data = np.asarray(self.normal_predictor.load_normal(normal_path))
+            output_dict["normal"] = torch.tensor(normal_data).unsqueeze(0)
 
         # Only add mask to dictionary if it exists
         if os.path.exists(mask_path := self.mask_paths[idx]):
@@ -400,7 +400,6 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
         data = batch["data"][0].to(self.device, non_blocking=True) / 255.0
         pose = batch["pose"][0].to(self.device, non_blocking=True)
         intr = batch["intr"][0].item()
-        normal = batch["normal"][0].to(self.device, non_blocking=True)
 
         assert data.dtype == torch.float32
         assert pose.dtype == torch.float32
@@ -412,12 +411,14 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
 
         sample = {
             "rgb_gt": data,
-            "normal_gt": normal,
             "rays_ori": rays_ori,
             "rays_dir": rays_dir,
             "T_to_world": pose,
             f"intrinsics_{camera_name}": camera_params_dict,
         }
+
+        if self.enable_normals:
+            sample["normal_gt"] = batch["normal"][0].to(self.device, non_blocking=True)
 
         if "mask" in batch:
             mask = batch["mask"][0].to(self.device, non_blocking=True) / 255.0

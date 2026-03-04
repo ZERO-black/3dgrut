@@ -118,6 +118,9 @@ extern "C" __global__ void __raygen__rg() {
     float rayTransmittanceGrad = -1.0f * params.rayDensityGrad[idx.z][idx.y][idx.x][0];
     float rayHitDistanceGrad   = params.rayHitDistanceGrad[idx.z][idx.y][idx.x][0];
 
+    float3 rayIntegratedNormal = make_float3(params.rayNormal[idx.z][idx.y][idx.x][0], params.rayNormal[idx.z][idx.y][idx.x][1], params.rayNormal[idx.z][idx.y][idx.x][2]);
+    float3 rayNormalGrad       = make_float3(params.rayNormalGrad[idx.z][idx.y][idx.x][0], params.rayNormalGrad[idx.z][idx.y][idx.x][1], params.rayNormalGrad[idx.z][idx.y][idx.x][2]);
+
     constexpr float epsT = 1e-9;
 
     float2 minMaxT   = intersectAABB(params.aabb, rayOrigin, rayDirection);
@@ -127,6 +130,7 @@ extern "C" __global__ void __raygen__rg() {
     float3 rayRadiance     = make_float3(0.f);
     float rayTransmittance = 1.f;
     float rayHitDistance   = 0.f;
+    float3 rayNormal       = make_float3(0.f);
 
     RayPayload rayPayload;
 
@@ -161,7 +165,15 @@ extern "C" __global__ void __raygen__rg() {
                     rayRadianceGrad,
                     rayIntegratedHitDistance,
                     rayHitDistance,
-                    rayHitDistanceGrad);
+                    rayHitDistanceGrad,
+#ifdef ENABLE_NORMALS
+                    rayIntegratedNormal,
+                    &rayNormal,
+                    rayNormalGrad
+#else
+                    make_float3(0), nullptr, make_float3(0)
+#endif
+                );
 
                 startT = fmaxf(startT, rayHit.distance);
             }

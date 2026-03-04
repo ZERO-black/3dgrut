@@ -18,6 +18,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Optional, Union
+import wandb
 
 import numpy as np
 import torch
@@ -468,19 +469,27 @@ class Trainer3DGRUT:
 
         loss_normal = torch.zeros(1, device=self.device)
         lambda_normal = 0
-        if self.conf.render.enable_normals:
+        if (
+            self.conf.render.enable_normals
+            and self.global_step > self.conf.normal_loss_start_iteration
+        ):
             with torch.cuda.nvtx.range("loss-normal"):
-                # normal_pred = torch.nn.functional.normalize(normal_pred, dim=-1)
-                # normal_gt = torch.nn.functional.normalize(normal_gt, dim=-1)
-
+                normal_pred = torch.nn.functional.normalize(normal_pred, dim=-1)
+                normal_gt = torch.nn.functional.normalize(normal_gt, dim=-1)
+                mask = (normal_gt.norm(dim=-1) > 0) & (normal_pred.norm(dim=-1) > 0)
                 # cos loss
-                # loss_normal = 1 - (normal_pred * normal_gt).sum(dim=-1)
-                # loss_normal = loss_normal.mean()
+
+                cos = (normal_pred[mask] * normal_gt[mask]).sum(dim=-1)
+                # print(cos.mean())
+                loss_normal = 1 - cos
+                loss_normal = loss_normal.mean()
 
                 # l2 loss
-                loss_normal = ((normal_gt - normal_pred) ** 2).mean()
+                # loss_normal = ((normal_gt - normal_pred) ** 2).mean()
 
-            lambda_normal = self.conf.normal_loss_lambda
+                lambda_normal = self.conf.normal_loss_lambda
+                lambda_l1 -= lambda_normal
+            # print(lambda_normal * loss_normal)
 
         # Total loss
         loss = (
@@ -488,7 +497,7 @@ class Trainer3DGRUT:
             + lambda_ssim * loss_ssim
             + lambda_opacity * loss_opacity
             + lambda_scale * loss_scale
-            + loss_normal * lambda_normal
+            + lambda_normal * loss_normal
         )
         return dict(
             total_loss=loss,
@@ -602,49 +611,84 @@ class Trainer3DGRUT:
 
         if self.conf.enable_writer and global_step > 0 and global_step % self.conf.log_frequency == 0:
             loss = np.mean(batch_metrics["losses"]["total_loss"])
+
+            log_dict = {
+                "loss/total/train": loss,
+                "num_particles/train": self.model.num_gaussians,
+                "train/num_GS": self.model.num_gaussians,
+            }
+
             writer.add_scalar("loss/total/train", loss, global_step)
+
             if self.conf.loss.use_l1:
                 l1_loss = np.mean(batch_metrics["losses"]["l1_loss"])
                 writer.add_scalar("loss/l1/train", l1_loss, global_step)
+                log_dict["loss/l1/train"] = l1_loss
             if self.conf.loss.use_l2:
                 l2_loss = np.mean(batch_metrics["losses"]["l2_loss"])
                 writer.add_scalar("loss/l2/train", l2_loss, global_step)
+                log_dict["loss/l2/train"] = l2_loss
             if self.conf.loss.use_ssim:
                 ssim_loss = np.mean(batch_metrics["losses"]["ssim_loss"])
                 writer.add_scalar("loss/ssim/train", ssim_loss, global_step)
+                log_dict["loss/ssim/train"] = ssim_loss
             if self.conf.loss.use_opacity:
                 opacity_loss = np.mean(batch_metrics["losses"]["opacity_loss"])
                 writer.add_scalar("loss/opacity/train", opacity_loss, global_step)
+                log_dict["loss/opacity/train"] = opacity_loss
             if self.conf.loss.use_scale:
                 scale_loss = np.mean(batch_metrics["losses"]["scale_loss"])
                 writer.add_scalar("loss/scale/train", scale_loss, global_step)
+                log_dict["loss/scale/train"] = scale_loss
             if self.conf.render.enable_normals:
                 normal_loss = np.mean(batch_metrics["losses"]["normal_loss"])
                 writer.add_scalar("loss/normal/train", normal_loss, global_step)
+                log_dict["loss/normal/train"] = normal_loss
             if "psnr" in batch_metrics:
-                writer.add_scalar("psnr/train", batch_metrics["psnr"], self.global_step)
+                writer.add_scalar("psnr/train", batch_metrics["psnr"], global_step)
+                log_dict["psnr/train"] = batch_metrics["psnr"]
             if "ssim" in batch_metrics:
-                writer.add_scalar("ssim/train", batch_metrics["ssim"], self.global_step)
+                writer.add_scalar("ssim/train", batch_metrics["ssim"], global_step)
+                log_dict["ssim/train"] = batch_metrics["ssim"]
             if "lpips" in batch_metrics:
-                writer.add_scalar("lpips/train", batch_metrics["lpips"], self.global_step)
+                writer.add_scalar("lpips/train", batch_metrics["lpips"], global_step)
+                log_dict["lpips/train"] = batch_metrics["lpips"]
             if "hits_mean" in batch_metrics:
-                writer.add_scalar("hits/mean/train", batch_metrics["hits_mean"], self.global_step)
+                writer.add_scalar(
+                    "hits/mean/train", batch_metrics["hits_mean"], global_step
+                )
+                log_dict["hits/mean/train"] = batch_metrics["hits_mean"]
             if "hits_std" in batch_metrics:
-                writer.add_scalar("hits/std/train", batch_metrics["hits_std"], self.global_step)
+                writer.add_scalar(
+                    "hits/std/train", batch_metrics["hits_std"], global_step
+                )
+                log_dict["hits/std/train"] = batch_metrics["hits_std"]
             if "hits_min" in batch_metrics:
-                writer.add_scalar("hits/min/train", batch_metrics["hits_min"], self.global_step)
+                writer.add_scalar(
+                    "hits/min/train", batch_metrics["hits_min"], global_step
+                )
+                log_dict["hits/min/train"] = batch_metrics["hits_min"]
             if "hits_max" in batch_metrics:
-                writer.add_scalar("hits/max/train", batch_metrics["hits_max"], self.global_step)
-
+                writer.add_scalar(
+                    "hits/max/train", batch_metrics["hits_max"], global_step
+                )
+                log_dict["hits/max/train"] = batch_metrics["hits_max"]
             if "timings" in batch_metrics:
                 for time_key in batch_metrics["timings"]:
                     writer.add_scalar(
-                        "time/" + time_key + "/train", batch_metrics["timings"][time_key], self.global_step
+                        "time/" + time_key + "/train",
+                        batch_metrics["timings"][time_key],
+                        global_step,
                     )
+                    timing = batch_metrics["timings"][time_key]
+                    log_dict[f"time/{time_key}/train"] = timing
 
-            writer.add_scalar("num_particles/train", self.model.num_gaussians, self.global_step)
-            writer.add_scalar("train/num_GS", self.model.num_gaussians, self.global_step)
+            writer.add_scalar(
+                "num_particles/train", self.model.num_gaussians, global_step
+            )
+            writer.add_scalar("train/num_GS", self.model.num_gaussians, global_step)
 
+            wandb.log(log_dict, step=global_step)
             # # NOTE: hack to easily compare with 3DGS
             # writer.add_scalar("train_loss_patches/total_loss", loss, global_step)
             # writer.add_scalar("gaussians/count", self.model.num_gaussians, self.global_step)
