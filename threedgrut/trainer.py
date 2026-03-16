@@ -249,11 +249,14 @@ class Trainer3DGRUT:
             logger.info(f"🤸 Initiating new 3dgrut training..")
             match conf.initialization.method:
                 case "random":
-                    model.init_from_random_point_cloud(
-                        num_gaussians=conf.initialization.num_gaussians,
-                        xyz_max=conf.initialization.xyz_max,
-                        xyz_min=conf.initialization.xyz_min,
-                    )
+                    if conf.dataset.type == "hypersim":
+                        model.init_from_hypersim_point_cloud(conf.path)
+                    else:
+                        model.init_from_random_point_cloud(
+                            num_gaussians=conf.initialization.num_gaussians,
+                            xyz_max=conf.initialization.xyz_max,
+                            xyz_min=conf.initialization.xyz_min,
+                        )
                 case "colmap":
                     observer_points = torch.tensor(
                         train_dataset.get_observer_points(), dtype=torch.float32, device=self.device
@@ -687,8 +690,8 @@ class Trainer3DGRUT:
                 "num_particles/train", self.model.num_gaussians, global_step
             )
             writer.add_scalar("train/num_GS", self.model.num_gaussians, global_step)
-
-            wandb.log(log_dict, step=global_step)
+            if self.conf.use_wandb:
+                wandb.log(log_dict, step=global_step)
             # # NOTE: hack to easily compare with 3DGS
             # writer.add_scalar("train_loss_patches/total_loss", loss, global_step)
             # writer.add_scalar("gaussians/count", self.model.num_gaussians, self.global_step)

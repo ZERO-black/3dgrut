@@ -1220,7 +1220,10 @@ class Engine3DGRUT:
 
         if object_path.endswith(".pt"):
             checkpoint = torch.load(object_path, weights_only=False)
-            conf = load_default_config()
+            if config_name == "-":
+                conf = checkpoint["config"]
+            else:
+                conf = load_default_config()
             model = MixtureOfGaussians(conf)
             model.init_from_checkpoint(checkpoint, setup_optimizer=False)
             object_name = conf.experiment_name

@@ -1,0 +1,57 @@
+# @package _global_
+
+defaults:
+  - /apps/hypersim_3dgrt
+  - _self_
+
+generate_normals: false
+normal_loss_lambda: 0.1
+normal_loss_start_iteration: 15000
+
+render:
+  primitive_type: instances
+  enable_normals: true
+
+loss:
+  use_l1: true
+  lambda_l1: 0.8
+  
+  use_l2: false
+  lambda_l2: 1.0
+
+  use_ssim: true
+  lambda_ssim: 0.2
+
+  use_opacity: false
+  lambda_opacity: 0.0
+
+  use_scale: false
+  lambda_scale: 0.0
+
+export_ingp:
+  enabled: false
+
+# strategy:
+#   densify:
+#     start_iteration: 40000
+#   prune:
+#     start_iteration: 50000
+
+
+optimizer:
+  type: adam # We only support adam and selective_adam for now
+  lr: 0.0
+  eps: 1.e-15
+  params:
+    positions:
+      lr: 0.00016 # 3DGS value: 0.00016 initial and decayed to 0.0000016
+    density:
+      lr: 0.05 # 3DGS value: 0.05
+    features_albedo:
+      lr: 0.0025 # 3DGS value: 0.0025
+    features_specular:
+      lr: ${div:${optimizer.params.features_albedo.lr},20} # 3DGS value 20x smaller than lr of features_albedo
+    rotation:
+      lr: 0.001 # 3DGS value: 0.001
+    scale:
+      lr: 0.005 # 3DGS value: 0.005

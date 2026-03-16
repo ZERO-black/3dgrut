@@ -15,14 +15,17 @@
 
 from __future__ import annotations
 
+import os
 import collections
 import math
 import platform
 import struct
+import h5py
 from dataclasses import dataclass
 from typing import Sequence
 
 import numpy as np
+import pandas as pd
 import torch
 
 DEFAULT_DEVICE = torch.device("cuda")
@@ -219,6 +222,10 @@ def create_camera_visualization(cam_list):
 CameraModel = collections.namedtuple("CameraModel", ["model_id", "model_name", "num_params"])
 Camera = collections.namedtuple("Camera", ["id", "model", "width", "height", "params"])
 BaseImage = collections.namedtuple("Image", ["id", "qvec", "tvec", "camera_id", "name", "xys", "point3D_ids"])
+BaseSimpleImage = collections.namedtuple(
+    "Image",
+    ["id", "camera_id", "name", "cam_to_world"],
+)
 Point3D = collections.namedtuple("Point3D", ["id", "xyz", "rgb", "error", "image_ids", "point2D_idxs"])
 CAMERA_MODELS = {
     CameraModel(model_id=0, model_name="SIMPLE_PINHOLE", num_params=3),
@@ -410,6 +417,10 @@ class Image(BaseImage):
         return qvec_to_so3(self.qvec)
 
 
+class SimpleImage(BaseSimpleImage):
+    pass
+
+
 def read_colmap_extrinsics_binary(path_to_model_file):
     """
     Read camera extrinsics from a COLMAP binary file.
@@ -597,3 +608,65 @@ def get_worker_id():
             return "main_process"
     except:
         return f"thread_{threading.get_ident()}"
+
+
+def read_hypersim_intrinsic(path, scene_name):
+    df = pd.read_csv(os.path.join(path, "metadata_camera_parameters.csv"))
+    row = df[df["scene_name"] == scene_name].iloc[0]
+
+    w = int(row["settings_output_img_width"])
+    h = int(row["settings_output_img_height"])
+
+    fov = row["settings_camera_fov"]
+    focal_x = w / (2 * np.tan(fov / 2))
+    focal_y = focal_x
+
+    return focal_x, focal_y, w, h
+
+
+def read_hypersim_extrinsics(path, cam_name="cam_00"):
+    cam_dir = os.path.join(path, "_detail", cam_name)
+
+    with h5py.File(
+        os.path.join(cam_dir, "camera_keyframe_orientations.hdf5"), "r"
+    ) as f:
+        R_c2w = f["dataset"][:]  # (N, 3, 3)
+
+    with h5py.File(os.path.join(cam_dir, "camera_keyframe_positions.hdf5"), "r") as f:
+        C = f["dataset"][:]  # (N, 3)
+
+    frame_idx_path = os.path.join(cam_dir, "camera_keyframe_frame_indices.hdf5")
+    if os.path.exists(frame_idx_path):
+        with h5py.File(frame_idx_path, "r") as f:
+            frame_indices = f["dataset"][:].astype(int)
+    else:
+        frame_indices = np.arange(R_c2w.shape[0], dtype=int)
+
+    images = []
+    image_dir = os.path.join(path, "images", f"scene_{cam_name}_final_hdf5")
+
+    renderer_cam_to_hyper_cam = np.diag([1, -1, -1])
+    hyper_world_to_renderer_world = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
+
+    for i in range(R_c2w.shape[0]):
+
+        R_h = R_c2w[i]
+        C_h = C[i]
+
+        # renderer cam to renderer world
+        R_r = hyper_world_to_renderer_world @ R_h @ renderer_cam_to_hyper_cam
+        C_r = hyper_world_to_renderer_world @ C_h
+
+        Tcw = np.eye(4)
+        Tcw[:3, :3] = R_r
+        Tcw[:3, 3] = C_r
+
+        frame_idx = frame_indices[i]
+        image_name = f"frame.{frame_idx:04d}.color.hdf5"
+
+        if os.path.exists(os.path.join(image_dir, image_name)):
+            images.append(
+                SimpleImage(id=i, camera_id=0, name=image_name, cam_to_world=Tcw)
+            )
+
+    return sorted(images, key=lambda x: x.name)

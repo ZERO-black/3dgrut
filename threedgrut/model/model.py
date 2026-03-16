@@ -488,6 +488,98 @@ class MixtureOfGaussians(torch.nn.Module, ExportableModel):
             self.setup_optimizer(state_dict=checkpoint["optimizer"])
         self.validate_fields()
 
+    @torch.no_grad()
+    def init_from_hypersim_point_cloud(
+        self,
+        scene_path,
+        cam_name="cam_00",
+        max_frames=20,
+        num_gaussians=100_000,
+        dtype=torch.float32,
+        set_optimizable_parameters=True,
+    ):
+
+        import os, glob, h5py
+        import numpy as np
+
+        logger.info("Generating point cloud from Hypersim positions...")
+
+        geom_dir = os.path.join(scene_path, "images", f"scene_{cam_name}_geometry_hdf5")
+        pos_files = sorted(glob.glob(os.path.join(geom_dir, "*.position.hdf5")))
+
+        if len(pos_files) == 0:
+            raise RuntimeError("No position.hdf5 files found")
+
+        step = max(1, len(pos_files) // max_frames)
+        pos_files = pos_files[::step][:max_frames]
+
+        pts = []
+
+        for fpath in pos_files:
+            with h5py.File(fpath, "r") as f:
+                p = f["dataset"][:]  # (H,W,3)
+                p = p @ np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]])
+
+            p = p.reshape(-1, 3)
+            mask = np.isfinite(p).all(axis=1)
+            pts.append(p[mask])
+
+        pts = np.concatenate(pts, axis=0)
+
+        if pts.shape[0] > num_gaussians:
+            idx = np.random.choice(pts.shape[0], num_gaussians, replace=False)
+            pts = pts[idx]
+
+        fused_point_cloud = torch.tensor(pts, dtype=dtype, device=self.device)
+
+        # color initialization (random like original code)
+        fused_color = (
+            torch.rand((fused_point_cloud.shape[0], 3), dtype=dtype, device=self.device)
+            / 255.0
+        )
+
+        features_albedo = features_specular = None
+        if self.feature_type == "sh":
+            features_albedo = fused_color.contiguous()
+            max_sh_degree = self.max_n_features
+            num_specular_features = sh_degree_to_specular_dim(max_sh_degree)
+            features_specular = torch.zeros(
+                (fused_point_cloud.shape[0], num_specular_features),
+                dtype=dtype,
+                device=self.device,
+            ).contiguous()
+
+        dist = torch.clamp_min(nearest_neighbor_dist_cpuKD(fused_point_cloud), 1e-3)
+        scales = torch.log(dist * self.conf.model.default_scale_factor)[
+            ..., None
+        ].repeat(1, 3)
+
+        rots = torch.rand((fused_point_cloud.shape[0], 4), device=self.device)
+        rots[:, 0] = 1
+
+        opacities = self.density_activation_inv(
+            self.conf.model.default_density
+            * torch.ones(
+                (fused_point_cloud.shape[0], 1), dtype=dtype, device=self.device
+            )
+        )
+
+        self.positions = torch.nn.Parameter(fused_point_cloud)
+        self.rotation = torch.nn.Parameter(rots.to(dtype=dtype, device=self.device))
+        self.scale = torch.nn.Parameter(scales.to(dtype=dtype, device=self.device))
+        self.density = torch.nn.Parameter(opacities.to(dtype=dtype, device=self.device))
+        self.features_albedo = torch.nn.Parameter(
+            features_albedo.to(dtype=dtype, device=self.device)
+        )
+        self.features_specular = torch.nn.Parameter(
+            features_specular.to(dtype=dtype, device=self.device)
+        )
+
+        if set_optimizable_parameters:
+            self.set_optimizable_parameters()
+
+        self.validate_fields()
+
     def default_initialize_from_points(self, pts, observer_pts, colors=None, use_observer_pts=True):
         """
         Given an Nx3 array of points (and optionally Nx3 rgb colors),

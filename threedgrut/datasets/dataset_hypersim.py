@@ -1,0 +1,331 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import copy
+import os, glob
+import platform
+import h5py
+
+import numpy as np
+import torch
+from PIL import Image
+from torch.utils.data import Dataset
+
+from threedgrut.utils.logger import logger
+
+from .camera_models import (
+    OpenCVFisheyeCameraModelParameters,
+    OpenCVPinholeCameraModelParameters,
+    ShutterType,
+    image_points_to_camera_rays,
+    pixels_to_image_points,
+)
+from .protocols import Batch, BoundedMultiViewDataset, DatasetVisualization
+from .utils import (
+    compute_max_radius,
+    create_camera_visualization,
+    get_center_and_diag,
+    get_worker_id,
+    pinhole_camera_rays,
+    read_hypersim_intrinsic,
+    read_hypersim_extrinsics
+)
+
+from threedgrut.datasets.normal_predictor import NormalPredictor
+
+class HypersimDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
+
+    def __init__(
+        self,
+        path,
+        device="cuda",
+        split="train",
+        downsample_factor=1,
+        test_split_interval=8,
+        ray_jitter=None,
+        enable_normals=False,
+    ):
+        self.path = path
+        self.device = device
+        self.split = split
+        self.downsample_factor = downsample_factor
+        self.ray_jitter = ray_jitter
+        self.test_split_interval = test_split_interval
+        self.enable_normals = enable_normals
+
+        # Worker-based GPU cache for multiprocessing compatibility
+        self._worker_gpu_cache = {}
+
+        # (Re)load intrinsics and extrinsics
+        self.reload()
+
+    def reload(self):
+        # GPU cache of processed camera intrinsics - now per camera ID
+        self.intrinsics = {}
+
+        # Get the scene data
+        self.load_intrinsics_and_extrinsics()
+        self.n_frames = len(self.cam_extrinsics)
+        self.load_camera_data()
+        indices = np.arange(self.n_frames)
+
+        # If test_split_interval is set, every test_split_interval frame will be excluded from the training set
+        # If test_split_interval is non-positive, all images will be used for training and testing
+        if self.test_split_interval > 0:
+            if self.split == "train":
+                indices = np.mod(indices, self.test_split_interval) != 0
+            else:
+                indices = np.mod(indices, self.test_split_interval) == 0
+
+        self.cam_extrinsics = [self.cam_extrinsics[i] for i in np.where(indices)[0]]
+        self.poses = self.poses[indices].astype(np.float32)
+        self.image_paths = self.image_paths[indices]  # numpy str array of image paths
+        self.camera_centers = self.camera_centers[indices]
+        self.center, self.length_scale, self.scene_bbox = self.compute_spatial_extents()
+
+        # Update the number of frames to only include the samples from the split
+        self.n_frames = self.poses.shape[0]
+
+        # Clear existing worker caches to force recreation with new intrinsics
+        self._worker_gpu_cache.clear()
+
+    def load_intrinsics_and_extrinsics(self):
+        scene_name = os.path.basename(self.path)
+
+        # cameras_extrinsic_file = os.path.join(self.path, "sparse/0", "images.bin")
+        # self.cam_extrinsics = read_colmap_extrinsics_binary(cameras_extrinsic_file)
+        self.cam_intrinsic = read_hypersim_intrinsic(self.path, scene_name)
+        self.cam_extrinsics = read_hypersim_extrinsics(self.path)
+
+    def load_camera_data(self):
+        """
+        Load the camera data and generate rays for each camera.
+        This function is called on CPU for multiprocessing compatibility
+        GPU tensors will be created per-worker as needed
+        """
+        self._camera_data_params = {}
+        self._store_camera_params_cpu()
+
+    def _store_camera_params_cpu(self):
+        """Store camera parameters on CPU for multiprocessing compatibility."""
+
+        def create_pinhole_camera(focalx, focaly, w, h):
+            # Generate UV coordinates
+            u = np.tile(np.arange(w), h)
+            v = np.arange(h).repeat(w)
+            out_shape = (1, h, w, 3)
+            params = OpenCVPinholeCameraModelParameters(
+                resolution=np.array([w, h], dtype=np.int64),
+                shutter_type=ShutterType.GLOBAL,
+                principal_point=np.array([w, h], dtype=np.float32) / 2,
+                focal_length=np.array([focalx, focaly], dtype=np.float32),
+                radial_coeffs=np.zeros((6,), dtype=np.float32),
+                tangential_coeffs=np.zeros((2,), dtype=np.float32),
+                thin_prism_coeffs=np.zeros((4,), dtype=np.float32),
+            )
+            rays_o_cam, rays_d_cam = pinhole_camera_rays(u, v, focalx, focaly, w, h, self.ray_jitter)
+            # rays_d_cam[..., 1] *= -1
+            return (
+                params.to_dict(),
+                torch.tensor(rays_o_cam, dtype=torch.float32).reshape(out_shape),
+                torch.tensor(rays_d_cam, dtype=torch.float32).reshape(out_shape),
+                type(params).__name__,
+            )
+
+        focal_length_x, focal_length_y, width, height = self.cam_intrinsic
+        self.intrinsics[0] = create_pinhole_camera(focal_length_x, focal_length_y, width, height)
+
+        # Load poses and paths
+        self.poses = []
+        self.camera_look_at = []
+        self.image_paths = []
+        self.mask_paths = []
+
+        cam_centers = []
+        for extr in logger.track(
+            self.cam_extrinsics,
+            description=f"Load Dataset ({self.split})",
+            color="salmon1",
+        ):
+            self.poses.append(extr.cam_to_world)
+            cam_centers.append(extr.cam_to_world[:3, 3])
+
+            image_path = os.path.join(self.path, "images", "scene_cam_00_final_hdf5", extr.name)
+            self.image_paths.append(image_path)
+
+            # Mask path
+            self.mask_paths.append(os.path.splitext(image_path)[0] + "_mask.png")
+
+        self.camera_centers = np.array(cam_centers)
+        _, diagonal = get_center_and_diag(self.camera_centers)
+        self.cameras_extent = diagonal * 1.1
+
+        self.poses = np.stack(self.poses)
+        self.image_paths = np.stack(self.image_paths, dtype=str)
+        self.mask_paths = np.stack(self.mask_paths, dtype=str)
+
+    def _lazy_worker_intrinsics_cache(self):
+        """Create intrinsics cache for a specific worker."""
+        worker_id = get_worker_id()
+
+        # Check if this worker already has cached tensors
+        if worker_id not in self._worker_gpu_cache:
+            # For now, fall back to the original approach for each worker
+            # This ensures each worker creates its own GPU tensors
+            worker_intrinsics = {}
+            for intr_id, (
+                params_dict,
+                rays_ori,
+                rays_dir,
+                camera_name,
+            ) in self.intrinsics.items():
+                # Create new GPU tensors for this worker
+                worker_rays_ori = rays_ori.to(self.device, non_blocking=True)
+                worker_rays_dir = rays_dir.to(self.device, non_blocking=True)
+                worker_intrinsics[intr_id] = (
+                    params_dict,
+                    worker_rays_ori,
+                    worker_rays_dir,
+                    camera_name,
+                )
+            self._worker_gpu_cache[worker_id] = worker_intrinsics
+
+        return self._worker_gpu_cache[worker_id]
+
+    @torch.no_grad()
+    def compute_spatial_extents(self):
+        camera_origins = torch.FloatTensor(self.poses[:, :, 3])
+        center = camera_origins.mean(dim=0)
+        dists = torch.linalg.norm(camera_origins - center[None, :], dim=-1)
+        mean_dist = torch.mean(dists)  # mean distance between of cameras from center
+        bbox_min = torch.min(camera_origins, dim=0).values
+        bbox_max = torch.max(camera_origins, dim=0).values
+        return center, mean_dist, (bbox_min, bbox_max)
+
+    def get_length_scale(self):
+        return self.length_scale
+
+    def get_center(self):
+        return self.center
+
+    def get_scene_bbox(self) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.scene_bbox
+
+    def get_scene_extent(self):
+        return self.cameras_extent
+
+    def get_observer_points(self):
+        return self.camera_centers
+
+    def get_poses(self) -> np.ndarray:
+        """Get camera poses as 4x4 transformation matrices.
+
+        COLMAP Dataset Implementation:
+        COLMAP naturally provides poses in a coordinate system compatible with
+        3DGRUT's "right down front" convention, so no coordinate conversion is needed.
+
+        The poses are constructed from COLMAP's world-to-camera matrices by:
+        1. Building W2C from rotation (qvec_to_so3) and translation (tvec)
+        2. Inverting to get camera-to-world: C2W = inv(W2C)
+
+        Returns:
+            np.ndarray: Camera poses with shape (N, 4, 4) in "right down front" convention
+        """
+        return self.poses
+
+    def get_intrinsics_idx(self, extr_idx: int):
+        return self.cam_extrinsics[extr_idx].camera_id
+
+    def __len__(self) -> int:
+        return self.n_frames
+
+    def __getitem__(self, idx) -> dict:
+        # Load image and get its actual dimensions
+        with h5py.File(self.image_paths[idx], "r") as f:
+            image_data = (f["dataset"][:] * 255).astype(np.uint8)
+        actual_h, actual_w = image_data.shape[:2]
+
+        # Use actual image dimensions for output shape
+        out_shape = (1, actual_h, actual_w, 3)
+
+        assert image_data.dtype == np.uint8, "Image data must be of type uint8"
+
+        output_dict = {
+            "data": torch.tensor(image_data).unsqueeze(0),
+            "pose": torch.tensor(self.poses[idx]).unsqueeze(0),
+            "intr": self.get_intrinsics_idx(idx),
+        }
+
+        if self.enable_normals:
+            # normal_path = self.image_paths[idx].replace("final", "geometry").replace("color", "normal_cam")
+            normal_path_world = self.image_paths[idx].replace("final", "geometry").replace("color", "normal_world")
+            # with h5py.File(normal_path, "r") as f:
+            #     normal_data = f["dataset"][:]
+            with h5py.File(normal_path_world, "r") as f:
+                normal_data_world = f["dataset"][:]
+            
+            # R = self.poses[idx][:3, :3]
+            # normal_data = normal_data @ (R @ np.diag([1, -1, -1])).T
+            
+            normal_data_world = normal_data_world @ np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]])
+
+            # n = torch.nn.functional.normalize(torch.from_numpy(normal_data), dim=-1)
+            # n_w = torch.nn.functional.normalize(torch.from_numpy(normal_data_world), dim=-1)
+
+            # cos = (n * n_w).sum(dim=-1)
+
+            # print(cos.mean(), cos.min(), cos.max())
+
+            output_dict["normal"] = torch.tensor(normal_data_world).unsqueeze(0)
+
+        # Only add mask to dictionary if it exists
+        if os.path.exists(mask_path := self.mask_paths[idx]):
+            mask = torch.from_numpy(np.array(Image.open(mask_path).convert("L"))).reshape(1, actual_h, actual_w, 1)
+            output_dict["mask"] = mask
+
+        return output_dict
+
+    def get_gpu_batch_with_intrinsics(self, batch):
+        """Add the intrinsics to the batch and move data to GPU."""
+
+        data = batch["data"][0].to(self.device, non_blocking=True) / 255.0
+        pose = batch["pose"][0].to(self.device, non_blocking=True)
+        intr = batch["intr"][0].item()
+
+        assert data.dtype == torch.float32
+        assert pose.dtype == torch.float32
+
+        # Get intrinsics for current worker
+        worker_intrinsics = self._lazy_worker_intrinsics_cache()
+
+        camera_params_dict, rays_ori, rays_dir, camera_name = worker_intrinsics[intr]
+
+        sample = {
+            "rgb_gt": data,
+            "rays_ori": rays_ori,
+            "rays_dir": rays_dir,
+            "T_to_world": pose,
+            f"intrinsics_{camera_name}": camera_params_dict,
+        }
+
+        if self.enable_normals:
+            sample["normal_gt"] = batch["normal"][0].to(self.device, non_blocking=True)
+
+        if "mask" in batch:
+            mask = batch["mask"][0].to(self.device, non_blocking=True) / 255.0
+            mask = (mask > 0.5).to(torch.float32)
+            sample["mask"] = mask
+
+        return Batch(**sample)

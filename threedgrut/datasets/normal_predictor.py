@@ -4,13 +4,18 @@ from PIL import Image
 
 
 from threedgrut_playground.utils.misc import color_normal
+from moge.model.v2 import MoGeModel
+from threedgrut.datasets.utils import focal2fov
 
 
 class NormalPredictor:
     model = None
     def __init__(self, generate_normals=False):
         if generate_normals and self.model == None:
-            self.model = torch.hub.load("hugoycj/DSINE-hub", "DSINE", trust_repo=True)
+            # self.model = torch.hub.load("hugoycj/DSINE-hub", "DSINE", trust_repo=True)
+            self.model = MoGeModel.from_pretrained("Ruicheng/moge-2-vitl-normal").to(
+                torch.device("cuda")
+            )
 
     def get_intrinsics_matrix_from_dict(self, data):
         fx, fy = data["focal_length"]
@@ -25,14 +30,23 @@ class NormalPredictor:
     def predict_normal(self, image_path, intrinsics, t_to_world, normal_path):
         image = torch.tensor(np.asarray(Image.open(image_path)), device="cuda").unsqueeze(0) / 255.0
         t_to_world = torch.tensor(t_to_world).unsqueeze(0).to("cuda", non_blocking=True)
+        fov_x = focal2fov(intrinsics["focal_length"][0], image.shape[2])
 
         with torch.no_grad():
-            pred_norm = self.model.infer_tensor(image.permute(0, 3, 1, 2), self.get_intrinsics_matrix_from_dict(intrinsics))
-        pred_norm = pred_norm.permute(0, 2, 3, 1)
+            # pred_norm = self.model.infer_tensor(image.permute(0, 3, 1, 2), self.get_intrinsics_matrix_from_dict(intrinsics))
+            pred_norm = self.model.infer(image.permute(0, 3, 1, 2), fov_x=fov_x)[
+                "normal"
+            ]
+        # print(pred_norm.shape)
+        # pred_norm = pred_norm.permute(0, 2, 3, 1)
+        # print(pred_norm.shape)
 
-        t_to_world = t_to_world[0, :3, :3].to("cuda", non_blocking=True)
-
-        pred_norm = pred_norm @ t_to_world.T
+        # t_to_world = t_to_world[0, :3, :3] @ torch.diag(
+        #     torch.tensor([1, -1, -1], device=t_to_world.device, dtype=torch.float)
+        # ) -> 삭제 필요
+        t_to_world = t_to_world[0, :3, :3]
+        t_to_world = t_to_world.to("cuda", non_blocking=True)
+        pred_norm = -pred_norm @ t_to_world.T
 
         pred_norm_cpu = pred_norm[0].cpu()
 

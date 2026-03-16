@@ -16,6 +16,7 @@
 from .dataset_colmap import ColmapDataset
 from .dataset_nerf import NeRFDataset
 from .dataset_scannetpp import ScannetppDataset
+from .dataset_hypersim import HypersimDataset
 
 
 def make(name: str, config, ray_jitter):
@@ -64,6 +65,23 @@ def make(name: str, config, ray_jitter):
                 downsample_factor=config.dataset.downsample_factor,
                 test_split_interval=config.dataset.test_split_interval,
             )
+        case "hypersim":
+            train_dataset = HypersimDataset(
+                config.path,
+                split="train",
+                ray_jitter=ray_jitter,
+                enable_normals=config.render.enable_normals,
+                downsample_factor=config.dataset.downsample_factor,
+                test_split_interval=config.dataset.test_split_interval,
+            )
+            val_dataset = HypersimDataset(
+                config.path,
+                split="val",
+                ray_jitter=ray_jitter,
+                enable_normals=config.render.enable_normals,
+                downsample_factor=config.dataset.downsample_factor,
+                test_split_interval=config.dataset.test_split_interval,
+            )
         case _:
             raise ValueError(
                 f'Unsupported dataset type: {config.dataset.type}. Choose between: ["colmap", "nerf", "scannetpp"].'
@@ -95,6 +113,13 @@ def make_test(name: str, config):
                 split="val",
                 downsample_factor=config.dataset.downsample_factor,
                 test_split_interval=config.dataset.test_split_interval,
+            )
+        case "hypersim":
+            dataset = HypersimDataset(
+                config.path,
+                downsample_factor=config.dataset.downsample_factor,
+                test_split_interval=config.dataset.test_split_interval,
+                enable_normals=config.render.enable_normals,
             )
         case _:
             raise ValueError(
