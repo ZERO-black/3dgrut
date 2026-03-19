@@ -43,3 +43,5 @@ scripts/
 temp/
 hypersim-retry/
 hypersim-temp/
+normal-depth/
+model_sample/

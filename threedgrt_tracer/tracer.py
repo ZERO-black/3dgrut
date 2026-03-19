@@ -22,6 +22,7 @@ import torch.utils.cpp_extension
 
 from threedgrut.datasets.protocols import Batch
 from threedgrut.utils.timer import CudaTimer
+from threedgrut.utils.misc import compute_normal_from_hit
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,14 @@ class Tracer:
             min_transmittance,
         ):
             particle_density = torch.concat([mog_pos, mog_dns, mog_rot, mog_scl, torch.zeros_like(mog_dns)], dim=1)
-            ray_radiance, ray_density, ray_hit_distance, ray_normals, hits_count, mog_visibility = tracer_wrapper.trace(
+            (
+                ray_radiance,
+                ray_density,
+                ray_hit_distance,
+                ray_normals,
+                hits_count,
+                mog_visibility,
+            ) = tracer_wrapper.trace(
                 frame_id,
                 ray_to_world,
                 ray_ori,
@@ -220,7 +228,14 @@ class Tracer:
             if self.frame_timer is not None:
                 self.frame_timer.start()
 
-            (pred_rgb, pred_opacity, pred_dist, pred_normals, hits_count, mog_visibility) = Tracer._Autograd.apply(
+            (
+                pred_rgb,
+                pred_opacity,
+                pred_dist,
+                pred_normals,
+                hits_count,
+                mog_visibility,
+            ) = Tracer._Autograd.apply(
                 self.tracer_wrapper,
                 frame_id,
                 gpu_batch.T_to_world.contiguous(),
@@ -246,6 +261,11 @@ class Tracer:
         if self.frame_timer is not None:
             self.timings["forward_render"] = self.frame_timer.timing()
 
+        with torch.no_grad():
+            normal_depth = compute_normal_from_hit(
+                gpu_batch.rays_ori, gpu_batch.rays_dir, gpu_batch.T_to_world, pred_dist
+            )
+
         return {
             "pred_rgb": pred_rgb,
             "pred_opacity": pred_opacity,
@@ -256,4 +276,5 @@ class Tracer:
                 self.frame_timer.timing() if self.frame_timer is not None else 0.0
             ),
             "mog_visibility": mog_visibility,
+            "normal_from_depth": normal_depth,
         }

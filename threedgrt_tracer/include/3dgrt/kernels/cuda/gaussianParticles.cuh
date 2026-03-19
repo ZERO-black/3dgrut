@@ -516,7 +516,8 @@ __device__ inline void processHitBwd(
     if ((gres > minParticleKernelDensity) && (galpha > minParticleAlpha)) {
         ParticleDensity& particleDensityGrad = particleDensityGradPtr[particleIdx];
 
-        const float3 grdd   = grd * (SurfelPrimitive ? -gro.z / grd.z : dot(grd, -1 * gro));
+        const float s       = dot(grd, -gro);
+        const float3 grdd   = grd * (SurfelPrimitive ? -gro.z / grd.z : s);
         const float3 grds   = gscl * grdd;
         const float gsqdist = dot(grds, grds);
         const float gdist   = sqrtf(gsqdist);
@@ -548,10 +549,10 @@ __device__ inline void processHitBwd(
         // ===> d_grds / d_gscl =  grd * dot(grd, -1 * gro)
         const float3 gsclRayHitGrd = grdd * grdsRayHitGrd;
         // ===> d_grds / d_grd =  - gscl * grd * (2 dot(grd, -1 * gro)
-        const float3 grdRayHitGrd = -gscl * make_float3(2 * grd.x * gro.x + grd.y * gro.y + grd.z * gro.z, grd.x * gro.x + 2 * grd.y * gro.y + grd.z * gro.z, grd.x * gro.x + grd.y * gro.y + 2 * grd.z * gro.z) * grdsRayHitGrd;
-        //
+        const float dot_term      = dot(gscl * grd, grdsRayHitGrd);
+        const float3 grdRayHitGrd = (gscl * grdsRayHitGrd) * s - gro * dot_term;
         // ===> d_grds / d_gro = - gscl * grd * grd
-        const float3 groRayHitGrd = -gscl * grd * grd * grdsRayHitGrd;
+        const float3 groRayHitGrd = -grd * dot_term;
 
         // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
         // ---> rayDns = 1 - prevTrm * (1-galpha) * nextTrm

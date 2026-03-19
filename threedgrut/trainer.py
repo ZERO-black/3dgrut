@@ -42,7 +42,12 @@ from threedgrut.render import Renderer
 from threedgrut.strategy.base import BaseStrategy
 from threedgrut.utils.gui import GUI
 from threedgrut.utils.logger import logger
-from threedgrut.utils.misc import check_step_condition, create_summary_writer, jet_map
+from threedgrut.utils.misc import (
+    check_step_condition,
+    create_summary_writer,
+    jet_map,
+    compute_normal_from_hit,
+)
 from threedgrut.utils.timer import CudaTimer
 from threedgrut.utils.viser_gui_util import ViserGUI
 
@@ -219,7 +224,7 @@ class Trainer3DGRUT:
         # Initialize
         if conf.resume:  # Load a checkpoint
             logger.info(f"🤸 Loading a pretrained checkpoint from {conf.resume}!")
-            checkpoint = torch.load(conf.resume)
+            checkpoint = torch.load(conf.resume, weights_only=False)
             model.init_from_checkpoint(checkpoint)
             self.strategy.init_densification_buffer(checkpoint)
             global_step = checkpoint["global_step"]
@@ -477,18 +482,27 @@ class Trainer3DGRUT:
             and self.global_step > self.conf.normal_loss_start_iteration
         ):
             with torch.cuda.nvtx.range("loss-normal"):
-                normal_pred = torch.nn.functional.normalize(normal_pred, dim=-1)
-                normal_gt = torch.nn.functional.normalize(normal_gt, dim=-1)
-                mask = (normal_gt.norm(dim=-1) > 0) & (normal_pred.norm(dim=-1) > 0)
-                # cos loss
+                # supervision with GT
+                # normal_pred = torch.nn.functional.normalize(normal_pred, dim=-1)
+                # normal_gt = torch.nn.functional.normalize(normal_gt, dim=-1)
+                # mask = (normal_gt.norm(dim=-1) > 0) & (normal_pred.norm(dim=-1) > 0)
+                # cos = (normal_pred[mask] * normal_gt[mask]).sum(dim=-1)
+                # loss_normal = 1 - cos
+                # loss_normal = loss_normal.mean()
 
-                cos = (normal_pred[mask] * normal_gt[mask]).sum(dim=-1)
-                # print(cos.mean())
+                normal_depth = compute_normal_from_hit(
+                    gpu_batch.rays_ori,
+                    gpu_batch.rays_dir,
+                    gpu_batch.T_to_world,
+                    outputs["pred_dist"],
+                )
+                normal_pred = torch.nn.functional.normalize(normal_pred, dim=-1)
+                normal_depth = torch.nn.functional.normalize(normal_depth, dim=-1)
+
+                mask = (outputs["pred_dist"] > 0).squeeze(-1)
+                cos = (normal_pred[mask] * normal_depth[mask]).sum(dim=-1)
                 loss_normal = 1 - cos
                 loss_normal = loss_normal.mean()
-
-                # l2 loss
-                # loss_normal = ((normal_gt - normal_pred) ** 2).mean()
 
                 lambda_normal = self.conf.normal_loss_lambda
                 lambda_l1 -= lambda_normal
@@ -509,7 +523,7 @@ class Trainer3DGRUT:
             ssim_loss=lambda_ssim * loss_ssim,
             opacity_loss=lambda_opacity * loss_opacity,
             scale_loss=lambda_scale * loss_scale,
-            normal_loss=lambda_normal * loss_normal,
+            normal_loss=loss_normal,
         )
 
     @torch.cuda.nvtx.range("log_validation_iter")

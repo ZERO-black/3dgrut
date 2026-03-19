@@ -148,11 +148,14 @@ def create_summary_writer(conf, object_name, out_dir, experiment_name, use_wandb
         wandb.login()
         wandb.init(
             config=OmegaConf.to_container(DictConfig(conf)),
-            project="3dgrt-normal",
+            project="3dgrt-normal-depth",
             group=conf.wandb_project,
             tags=[experiment_name],
             name=run_name,
         )
+        # Define custom metrics to avoid tensorboard syncing warning
+        wandb.define_metric("step")
+        wandb.define_metric("*", step_metric="step")
         wandb.tensorboard.patch(root_logdir=out_dir, save=False)
 
     writer = SummaryWriter(log_dir=out_dir)
@@ -201,3 +204,46 @@ def check_step_condition(step: int, start: int, end: int, freq: int) -> bool:
     if (start >= 0 and step > start) and (step < end or end == -1) and step % freq == 0:
         return True
     return False
+
+
+@torch.cuda.nvtx.range("depth-normal")
+def compute_normal_from_hit(ray_o, ray_d, t_to_world, ray_t):
+    R = t_to_world[0][:3, :3]
+    T = t_to_world[0][:3, 3]
+
+    ray_origin = ray_o @ R.T + T
+    ray_dir = ray_d @ R.T
+    pos = ray_origin + ray_t * ray_dir  # (B,H,W,3)
+
+    # 2. neighbor positions (중심차분)
+    pL = pos[:, :, :-2, :]
+    pR = pos[:, :, 2:, :]
+    pU = pos[:, :-2, :, :]
+    pD = pos[:, 2:, :, :]
+
+    # 중앙 영역 (valid 영역)
+    tx = pR - pL  # (B,H,W-2,3)
+    ty = pD - pU  # (B,H-2,W,3)
+
+    # shape 맞추기 위해 crop
+    tx = tx[:, 1:-1, :, :]  # (B,H-2,W-2,3)
+    ty = ty[:, :, 1:-1, :]  # (B,H-2,W-2,3)
+
+    # 3. cross product
+    n = torch.cross(tx, ty, dim=-1)
+
+    # 4. normalize
+    n = torch.nn.functional.normalize(n, dim=-1, eps=1e-8)
+
+    # 5. 방향 정렬 (camera-facing)
+    ray_dir_center = ray_dir[:, 1:-1, 1:-1, :]
+    dot = (n * ray_dir_center).sum(dim=-1, keepdim=True)
+    n = torch.where(dot > 0, -n, n)
+
+    # 6. padding (border 처리)
+    B, H, W, _ = ray_o.shape
+    normal = torch.zeros_like(pos)
+
+    normal[:, 1:-1, 1:-1, :] = n
+
+    return normal

@@ -1060,7 +1060,12 @@ class Playground:
     def _draw_rendering_options_widget(self):
         psim.SetNextItemOpen(True, psim.ImGuiCond_FirstUseEver)
         if psim.TreeNode("Rendering Options"):
-            available_options = [RenderOptions.RADIANCE, RenderOptions.DEPTH, RenderOptions.NORMAL]
+            available_options = [
+                RenderOptions.RADIANCE,
+                RenderOptions.DEPTH,
+                RenderOptions.NORMAL,
+                RenderOptions.NORMAL_FROM_DEPTH,
+            ]
             current_option_idx = available_options.index(self.engine.render_option)
 
             options_changed, new_option_idx = psim.Combo("Rendering Options", current_option_idx, available_options)

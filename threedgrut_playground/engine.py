@@ -731,6 +731,7 @@ class RenderOptions(StrEnum):
     RADIANCE = "Radiance"
     DEPTH = "Depth"
     NORMAL = "Normal"
+    NORMAL_FROM_DEPTH = "Normal_depth"
 
 
 class Engine3DGRUT:
@@ -904,6 +905,8 @@ class Engine3DGRUT:
                 next_frame = dof_rb["pred_rgb"]
             elif self.render_option == RenderOptions.DEPTH:
                 next_frame = dof_rb["pred_dist"]
+            elif self.render_option == RenderOptions.NORMAL_FROM_DEPTH:
+                next_frame = color_normal(dof_rb["normal_from_depth"])
             else:
                 next_frame = color_normal(dof_rb["pred_normals"])
             rb["rgb"] = self._accumulate_to_buffer(
@@ -932,6 +935,8 @@ class Engine3DGRUT:
                 buffer = spp_rb["pred_rgb"]
             elif self.render_option == RenderOptions.DEPTH:
                 buffer = spp_rb["pred_dist"]
+            elif self.render_option == RenderOptions.NORMAL_FROM_DEPTH:
+                buffer = color_normal(spp_rb["normal_from_depth"])
             else:
                 buffer = color_normal(spp_rb["pred_normals"])
             batch = buffer.sum(dim=0).unsqueeze(0)
@@ -1108,8 +1113,10 @@ class Engine3DGRUT:
                 rgb = rb["pred_rgb"]
             elif self.render_option == RenderOptions.DEPTH:
                 rgb = visualize_depth_t_minmax_rgb(rb["pred_dist"])
+            elif self.render_option == RenderOptions.NORMAL_FROM_DEPTH:
+                rgb = color_normal(rb["normal_from_depth"])
             else:
-                rgb = rb["pred_normals"]
+                rgb = color_normal(rb["pred_normals"])
 
             rb = dict(rgb=rgb, opacity=rb["pred_opacity"])
             rb["rgb"] = self.environment.tonemap(rb["rgb"])

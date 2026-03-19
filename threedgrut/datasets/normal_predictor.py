@@ -46,7 +46,7 @@ class NormalPredictor:
         # ) -> 삭제 필요
         t_to_world = t_to_world[0, :3, :3]
         t_to_world = t_to_world.to("cuda", non_blocking=True)
-        pred_norm = -pred_norm @ t_to_world.T
+        pred_norm = pred_norm @ t_to_world.T
 
         pred_norm_cpu = pred_norm[0].cpu()
 
